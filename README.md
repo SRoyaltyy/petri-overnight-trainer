@@ -11,14 +11,14 @@ and commits the book with `GITHUB_TOKEN`.
 ## How it works
 
 1. Load `books/latest.json` if present; otherwise seed 16 random arch-5 nets.
-2. Play silent Lab matches (~36 s sim, 54 s on World, difficulty `live`, mode `spectate`):
-   - Europe (Slide) — Gibraltar is the gate; ghost duels stay here
-   - Americas (Royale) when `games % 7 === 6`
-   - compact World (8 colours, live continent coasts) when `games % 4 === 1`
+2. Play silent Lab matches (~36 s sim, 54 s on Swarm, difficulty `live`, mode `spectate`):
+   - Slide (open water, no reefs) — default + ghost duels
+   - Royale (open water) when `games % 7 === 6`
+   - compact Swarm (8 colours, live reef recipe, radius 720) when `games % 4 === 1`
    - ghost duel vs a frozen league ancestor (`g-*`) when the league is
      nonempty and `games % 4 === 3`
-   Each think can fire **two** concurrent legal actions. Oceans block a
-   straight tentacle; famous straits are the only shot through.
+   Each think can fire **two** concurrent legal actions. Tentacles cannot
+   cross reefs (Swarm only — Slide/Royale match the live open dishes).
 3. Score every legal **send** and **cut**. Each strain is a 546-float net
    (send head + cut head). See [docs/ARCH.md](docs/ARCH.md).
 4. Every 10 games: fitness EMA, Elo/strength, crossover/mutation.

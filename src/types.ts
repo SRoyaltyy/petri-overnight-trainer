@@ -13,8 +13,8 @@ export const DT = 1 / 60;
 export const BOOK_KEY = "petri-strains-v5";
 export const MAX_FACTIONS = 32;
 /**
- * Compact World for overnight: 8 colours on the live continent coasts.
- * Live Petri is 32 colours on the same geometry.
+ * Compact Swarm for overnight: 8 colours, live reef recipe, ~60–90 cells on a
+ * 720-radius dish. Live Petri is 32 colours / radius 1120 / up to 220 cells.
  */
 export const TRAIN_SWARM_FACTIONS = 8;
 export const TRAIN_SWARM_RADIUS = 720;
