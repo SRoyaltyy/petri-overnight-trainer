@@ -17,6 +17,8 @@ export type LegalAction = LegalSend | LegalCut;
 export interface LegalSet {
   /** HG-1b: this tick is cut-only on dead support pipes. */
   forcedCuts: boolean;
+  /** HG-2: easy prey existed, so fortified enemy sends were dropped. */
+  droppedFortified: boolean;
   sends: LegalSend[];
   cuts: LegalCut[];
 }
@@ -69,10 +71,62 @@ function alreadyAimed(fromId: number, toId: number, tentacles: Tentacle[]): bool
   return tentacles.some((t) => t.from === fromId && t.to === toId);
 }
 
+/** Same-faction pipes touching `cell` (feeds or outbound). Neutral has none. */
+export function factionSupportCount(cell: Cell, tentacles: Tentacle[]): number {
+  if (cell.owner === 0) return 0;
+  let n = 0;
+  for (const t of tentacles) {
+    if (t.owner !== cell.owner) continue;
+    if (t.from === cell.id || t.to === cell.id) n++;
+  }
+  return n;
+}
+
+/** Enemy is winning a locked clash (their outbound lockT is at/past the midpoint). */
+export function isStrongSideLock(cell: Cell, tentacles: Tentacle[]): boolean {
+  for (const t of tentacles) {
+    if (t.state !== "locked") continue;
+    if (t.owner === cell.owner && t.from === cell.id && t.lockT >= 0.5) return true;
+  }
+  return false;
+}
+
+/**
+ * HG-2 easy prey: in-reach neutral, or a low-energy enemy with little/no
+ * same-faction support that is not winning a lock.
+ */
+export function isEasyPrey(
+  to: Cell,
+  viewer: number,
+  tentacles: Tentacle[],
+  maxEnergy = MAX_ENERGY,
+): boolean {
+  if (to.owner === 0) return true;
+  if (to.owner === viewer) return false;
+  const low = to.energy <= 40 || to.energy <= 0.2 * maxEnergy;
+  if (!low) return false;
+  if (factionSupportCount(to, tentacles) > 1) return false;
+  if (isStrongSideLock(to, tentacles)) return false;
+  return true;
+}
+
+/** High-energy and/or well-supported / strong-lock enemy — not easy prey. */
+export function isFortifiedEnemy(
+  to: Cell,
+  viewer: number,
+  tentacles: Tentacle[],
+  maxEnergy = MAX_ENERGY,
+): boolean {
+  if (to.owner === 0 || to.owner === viewer) return false;
+  return !isEasyPrey(to, viewer, tentacles, maxEnergy);
+}
+
 /**
  * Hard-ground legal set for one think tick.
  * HG-1a drops send-to-saturated-safe-ally.
  * HG-1b: if any dead support pipe exists, the set is only cuts on those pipes.
+ * HG-2: if any easy-prey sends exist, drop fortified *enemy* sends only.
+ *        Ally snowball (sub-200 / threatened / growing-out) stays legal.
  */
 export function legalThinkMoves(
   owner: number,
@@ -84,12 +138,13 @@ export function legalThinkMoves(
   if (dead.length > 0) {
     return {
       forcedCuts: true,
+      droppedFortified: false,
       sends: [],
       cuts: dead.map((t) => ({ kind: "cut", tentacleId: t.id })),
     };
   }
 
-  const sends: LegalSend[] = [];
+  let sends: LegalSend[] = [];
   const cuts: LegalCut[] = [];
 
   for (const from of cells) {
@@ -107,11 +162,22 @@ export function legalThinkMoves(
     }
   }
 
+  const hasEasyPrey = sends.some((s) => {
+    const dest = cells[s.to];
+    return dest && isEasyPrey(dest, owner, tentacles, maxEnergy);
+  });
+  if (hasEasyPrey) {
+    sends = sends.filter((s) => {
+      const dest = cells[s.to];
+      return dest && !isFortifiedEnemy(dest, owner, tentacles, maxEnergy);
+    });
+  }
+
   for (const t of tentacles) {
     if (t.owner !== owner) continue;
     if (!cells[t.from] || !cells[t.to]) continue;
     cuts.push({ kind: "cut", tentacleId: t.id });
   }
 
-  return { forcedCuts: false, sends, cuts };
+  return { forcedCuts: false, droppedFortified: hasEasyPrey, sends, cuts };
 }

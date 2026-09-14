@@ -3,6 +3,8 @@ import { test } from "node:test";
 import { Engine } from "../src/engine.js";
 import {
   deadSupportPipes,
+  isEasyPrey,
+  isFortifiedEnemy,
   isSaturatedSafeAlly,
   legalThinkMoves,
 } from "../src/legal.js";
@@ -149,6 +151,97 @@ test("thinkNet never samples a send onto a saturated safe ally", () => {
       "no send landed on saturated safe ally",
     );
   }
+});
+
+/** A can reach a sub-200 ally, a neutral, a weak isolated enemy, and a fat enemy. */
+function preyBoard() {
+  const A = makeCell(0, 1, 80, 0, 0);
+  const ally = makeCell(1, 1, 80, 35, 0);
+  const neutral = makeCell(2, 0, 0, 0, 35);
+  const weak = makeCell(3, 2, 25, -35, 0);
+  const fat = makeCell(4, 2, 160, 35, 35);
+  return { A, ally, neutral, weak, fat, cells: [A, ally, neutral, weak, fat] };
+}
+
+test("HG-2: when easy prey exists, drop fortified enemy sends only", () => {
+  const { A, ally, neutral, weak, fat, cells } = preyBoard();
+  assert.equal(isEasyPrey(neutral, 1, []), true);
+  assert.equal(isEasyPrey(weak, 1, []), true);
+  assert.equal(isEasyPrey(ally, 1, []), false);
+  assert.equal(isFortifiedEnemy(fat, 1, []), true);
+  const legal = legalThinkMoves(1, cells, []);
+  assert.equal(legal.forcedCuts, false);
+  assert.equal(legal.droppedFortified, true);
+  const targets = new Set(legal.sends.filter((s) => s.from === A.id).map((s) => s.to));
+  assert.ok(targets.has(neutral.id), "neutral stays legal");
+  assert.ok(targets.has(weak.id), "isolated weak enemy stays legal");
+  assert.ok(targets.has(ally.id), "sub-200 ally snowball stays legal beside neutrals");
+  assert.ok(!targets.has(fat.id), "fortified enemy send is removed");
+});
+
+test("HG-2: ally snowball to 200 stays legal alongside open neutrals", () => {
+  const A = makeCell(0, 1, 90, 0, 0);
+  const ally = makeCell(1, 1, 170, 40, 0);
+  const neutral = makeCell(2, 0, 0, 0, 40);
+  const legal = legalThinkMoves(1, [A, ally, neutral], []);
+  assert.ok(legal.sends.some((s) => s.from === A.id && s.to === ally.id));
+  assert.ok(legal.sends.some((s) => s.from === A.id && s.to === neutral.id));
+});
+
+test("HG-2: HG-1a still bans a saturated safe ally even when neutrals are open", () => {
+  const A = makeCell(0, 1, 90, 0, 0);
+  const full = makeCell(1, 1, MAX_ENERGY, 40, 0);
+  const neutral = makeCell(2, 0, 0, 0, 40);
+  assert.equal(isSaturatedSafeAlly(full, []), true);
+  const legal = legalThinkMoves(1, [A, full, neutral], []);
+  assert.ok(!legal.sends.some((s) => s.to === full.id));
+  assert.ok(legal.sends.some((s) => s.to === neutral.id));
+});
+
+test("HG-2: well-supported weak enemy is fortified and dropped when easy prey exists", () => {
+  const A = makeCell(0, 1, 80, 0, 0);
+  const neutral = makeCell(1, 0, 0, 0, 40);
+  const weak = makeCell(2, 2, 20, 40, 0);
+  const s1 = makeCell(3, 2, 40, 70, 10);
+  const s2 = makeCell(4, 2, 40, 70, -10);
+  const tents = [makeTent(1, s1.id, weak.id, 2, "latched"), makeTent(2, s2.id, weak.id, 2, "latched")];
+  assert.equal(isEasyPrey(weak, 1, tents), false);
+  assert.equal(isFortifiedEnemy(weak, 1, tents), true);
+  const legal = legalThinkMoves(1, [A, neutral, weak, s1, s2], tents);
+  assert.ok(legal.sends.some((s) => s.to === neutral.id));
+  assert.ok(!legal.sends.some((s) => s.to === weak.id));
+});
+
+test("HG-2: strong-side lock makes a weak enemy fortified", () => {
+  const A = makeCell(0, 1, 80, 0, 0);
+  const neutral = makeCell(1, 0, 0, 0, 40);
+  const weak = makeCell(2, 2, 20, 40, 0);
+  const lock = makeTent(9, weak.id, A.id, 2, "locked");
+  lock.lockT = 0.72;
+  assert.equal(isEasyPrey(weak, 1, [lock]), false);
+  const legal = legalThinkMoves(1, [A, neutral, weak], [lock]);
+  assert.ok(!legal.sends.some((s) => s.to === weak.id));
+  assert.ok(legal.sends.some((s) => s.to === neutral.id));
+});
+
+test("HG-2: without easy prey, fortified enemy sends stay legal", () => {
+  const A = makeCell(0, 1, 80, 0, 0);
+  const fat = makeCell(1, 2, 160, 40, 0);
+  assert.equal(isFortifiedEnemy(fat, 1, []), true);
+  const legal = legalThinkMoves(1, [A, fat], []);
+  assert.equal(legal.droppedFortified, false);
+  assert.ok(legal.sends.some((s) => s.from === A.id && s.to === fat.id));
+});
+
+test("HG-1b still outranks HG-2 when a dead support pipe exists", () => {
+  const { A, ally, cells } = preyBoard();
+  ally.energy = MAX_ENERGY;
+  const pipe = makeTent(3, A.id, ally.id, 1, "latched");
+  assert.equal(isSaturatedSafeAlly(ally, [pipe]), true);
+  const legal = legalThinkMoves(1, cells, [pipe]);
+  assert.equal(legal.forcedCuts, true);
+  assert.deepEqual(legal.sends, []);
+  assert.deepEqual(legal.cuts, [{ kind: "cut", tentacleId: 3 }]);
 });
 
 test("thinkNet forced-cuts a dead support pipe even when the cut head is hostile", () => {

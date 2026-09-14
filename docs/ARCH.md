@@ -184,6 +184,24 @@ no enemy tentacle onto `T` (growing / latched / locked), and `T` itself is not
   those pipes (any cutT). The `-.08` score floor is skipped so the pipe is
   actually cleared — a live feed into a full, safe ally just burns a slot.
 
+**Easy prey / fortified enemy (HG-2).** Neutrals vs punching clusters — not
+an economy ban. Power output scales up sharply near 200, so feeding a
+**sub-200 ally** (or concentrating growth) can beat an opponent who grabbed
+neutrals but never scaled. That is allowed even while neutrals sit open.
+Only a full, safe ally is HG-1.
+
+- **Easy prey:** in-reach `owner === 0`, or an isolated weak enemy
+  (`energy ≤ 40` or `≤ 0.2 * maxEnergy`, same-faction support ≤ 1, not
+  winning a locked clash).
+- **Fortified enemy:** high-energy and/or well-supported / strong-side-lock
+  opponent cell.
+- **When any easy-prey send exists this tick:** drop fortified *enemy*
+  sends only. Keep neutrals, isolated weak enemies, and own sub-200 (or
+  threatened / growing-out) ally feeds. Do not ban the expo race.
+- **HG-1b still outranks everything** (cut-only on dead support pipes).
+- No advanced exceptions yet for hitting strong connected enemies
+  (kingmaker, etc.).
+
 ## Evolution (every 10 games)
 
 Fitness EMA: `fitness = fitness * 0.7 + matchScore * 0.3`.
