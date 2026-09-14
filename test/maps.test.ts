@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Engine } from "../src/engine.js";
 import { pickDish } from "../src/evolve.js";
+import { onLand, project, projectLand, regionOf } from "../src/geo.js";
 import { dishRadiusOf, factionCount, generateDish, pathBlocked } from "../src/maps.js";
-import { EMPTY_EVENTS, TRAIN_SWARM_FACTIONS, TRAIN_SWARM_RADIUS } from "../src/types.js";
+import { EMPTY_EVENTS, TRAIN_SWARM_FACTIONS } from "../src/types.js";
 
 function rngFrom(seed: number): () => number {
   let s = seed >>> 0;
@@ -32,47 +33,44 @@ test("send across a barrier is illegal", () => {
   }
 });
 
-test("generated slide and royale dishes have no reefs (live parity)", () => {
-  for (const id of ["slide", "royale"] as const) {
-    let withWalls = 0;
-    for (let i = 0; i < 24; i++) {
-      const dish = generateDish(id, rngFrom((i + 1) * 9973));
-      if ((dish.barriers?.length ?? 0) > 0) withWalls++;
-    }
-    assert.equal(withWalls, 0, `${id} must be open water like the live app`);
+test("generated dishes are continents with coastline walls", () => {
+  for (const id of ["slide", "royale", "swarm"] as const) {
+    const dish = generateDish(id, rngFrom(42));
+    assert.ok((dish.barriers?.length ?? 0) >= 20, `${id} needs coastline walls, got ${dish.barriers?.length ?? 0}`);
+    const owners = new Set(dish.cells.filter((c) => c.owner > 0).map((c) => c.owner));
+    assert.equal(owners.size, factionCount(id));
+    const land = projectLand(regionOf(id));
+    for (const c of dish.cells) assert.equal(onLand(c.x, c.y, land), true, `${id} cell off land`);
   }
 });
 
-test("compact swarm uses the live reef recipe at train scale", () => {
+test("compact world keeps eight colours on live coasts", () => {
   const dish = generateDish("swarm", rngFrom(42));
   assert.equal(factionCount("swarm"), TRAIN_SWARM_FACTIONS);
-  assert.equal(dishRadiusOf("swarm"), TRAIN_SWARM_RADIUS);
-  assert.equal(dish.radius, TRAIN_SWARM_RADIUS);
+  assert.ok(dishRadiusOf("swarm") > 800, `world should be wide, got ${dishRadiusOf("swarm")}`);
+  assert.ok((dish.radius ?? 0) > 800);
   const owners = new Set(dish.cells.filter((c) => c.owner > 0).map((c) => c.owner));
   assert.equal(owners.size, TRAIN_SWARM_FACTIONS);
-  assert.ok(dish.cells.length > 24, `expected a dense mid, got ${dish.cells.length} cells`);
-  assert.ok((dish.barriers?.length ?? 0) >= 6, `expected dense reefs, got ${dish.barriers?.length ?? 0}`);
+  assert.ok(dish.cells.length > 16, `expected a populated world, got ${dish.cells.length} cells`);
+  assert.ok((dish.barriers?.length ?? 0) >= 80, `expected coastlines, got ${dish.barriers?.length ?? 0}`);
   const engine = new Engine("swarm", "live", "spectate", EMPTY_EVENTS, true, true);
   assert.equal(engine.factionCount(), TRAIN_SWARM_FACTIONS);
   assert.ok(engine.barriers.length >= 1);
   assert.equal(engine.brains.length, 33);
 });
 
-test("swarm walls stay off cells", () => {
-  for (let i = 0; i < 12; i++) {
-    const dish = generateDish("swarm", rngFrom((i + 3) * 7919));
-    const walls = dish.barriers ?? [];
-    for (const w of walls) {
-      for (const c of dish.cells) {
-        const dx = w.x2 - w.x1;
-        const dy = w.y2 - w.y1;
-        const len2 = dx * dx + dy * dy;
-        const t = len2 < 1e-8 ? 0 : Math.max(0, Math.min(1, ((c.x - w.x1) * dx + (c.y - w.y1) * dy) / len2));
-        const d = Math.hypot(c.x - (w.x1 + dx * t), c.y - (w.y1 + dy * t));
-        assert.ok(d > 40, "wall stays off cells");
-      }
-    }
-  }
+test("gibraltar is open and the atlantic is a moat", () => {
+  const eu = generateDish("slide", rngFrom(3));
+  const world = generateDish("swarm", rngFrom(7));
+  const paris = project(-1.2, 47.2, "europe");
+  const rabat = project(-6.8, 34.0, "europe");
+  const nyc = project(-74, 41, "world");
+  const lisbon = project(-9, 39, "world");
+  const chuk = project(172, 66, "world");
+  const alaska = project(-166, 65, "world");
+  assert.equal(pathBlocked(paris.x, paris.y, rabat.x, rabat.y, eu.barriers ?? []), false);
+  assert.equal(pathBlocked(nyc.x, nyc.y, lisbon.x, lisbon.y, world.barriers ?? []), true);
+  assert.equal(pathBlocked(chuk.x, chuk.y, alaska.x, alaska.y, world.barriers ?? []), false);
 });
 
 test("legal set omits a send that would cross a wall", () => {
