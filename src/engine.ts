@@ -2,19 +2,26 @@ import { writeCutFeatures, writeSendFeatures } from "./features.js";
 import { legalThinkMoves, type LegalSet } from "./legal.js";
 import {
   cellRadius,
+  dishRadiusOf,
   factionCount,
   generateDish,
   growSpeed,
   packetSpeed,
+  pathBlocked,
   pumpRate,
   reachOf,
   regenRate,
   tentacleSlots,
 } from "./maps.js";
 import {
+  CONCURRENT_ACTIONS,
   DT,
   EMPTY_EVENTS,
   MAX_ENERGY,
+  MAX_FACTIONS,
+  emptyFactionStats,
+  emptyOccupancy,
+  type Barrier,
   type Cell,
   type Difficulty,
   type DishId,
@@ -40,6 +47,9 @@ function hypot(ax: number, ay: number, bx: number, by: number): number {
 export class Engine {
   cells: Cell[] = [];
   tentacles: Tentacle[] = [];
+  barriers: Barrier[] = [];
+  dishRadius = 360;
+  factionMax = 4;
   mode: EngineMode;
   difficulty: Difficulty;
   dishId: DishId;
@@ -50,12 +60,12 @@ export class Engine {
   winner: number | null = null;
   lost = false;
   silent: boolean;
-  brains: Array<Net | null> = [null, null, null, null, null];
-  thinkAcc = [0, 0, 0, 0, 0];
-  sendCount = [0, 0, 0, 0, 0];
-  captureCount = [0, 0, 0, 0, 0];
-  cutCount = [0, 0, 0, 0, 0];
-  drainCount = [0, 0, 0, 0, 0];
+  brains: Array<Net | null> = Array.from({ length: MAX_FACTIONS + 1 }, () => null);
+  thinkAcc = emptyFactionStats();
+  sendCount = emptyFactionStats();
+  captureCount = emptyFactionStats();
+  cutCount = emptyFactionStats();
+  drainCount = emptyFactionStats();
   events: EngineEvents;
   feat = new Float32Array(32);
   incoming = new Int16Array(24);
@@ -78,7 +88,11 @@ export class Engine {
     this.events = events;
     this.silent = silent;
     this.player = +(mode === "play");
+    this.factionMax = factionCount(dishId);
+    this.dishRadius = dishRadiusOf(dishId);
     const dish = generateDish(dishId);
+    this.dishRadius = dish.radius ?? this.dishRadius;
+    this.barriers = dish.barriers ?? [];
     this.cells = dish.cells.map((c, id) => ({
       id,
       x: c.x,
@@ -86,18 +100,22 @@ export class Engine {
       energy: c.energy,
       owner: c.owner,
       captureNeed: c.captureNeed ?? 10,
-      occupancy: [0, 0, 0, 0, 0],
+      occupancy: emptyOccupancy(),
       radius: cellRadius(c.energy),
     }));
     this.started = new Set(this.cells.map((c) => c.owner));
     this.incoming = new Int16Array(this.cells.length);
     this.outgoing = new Int16Array(this.cells.length);
     this.aimed = new Int16Array(this.cells.length);
-    this.thinkAcc = this.thinkAcc.map((_, i) => -i * 0.27);
+    this.thinkAcc = this.thinkAcc.map((_, i) => -i * (this.factionMax > 8 ? 0.05 : 0.27));
   }
 
   factionCount(): number {
-    return factionCount(this.dishId);
+    return this.factionMax;
+  }
+
+  lineBlocked(ax: number, ay: number, bx: number, by: number): boolean {
+    return this.barriers.length > 0 && pathBlocked(ax, ay, bx, by, this.barriers);
   }
 
   advance(steps: number, until = Infinity): void {
@@ -322,7 +340,7 @@ export class Engine {
     const prev = cell.owner;
     cell.owner = owner;
     cell.energy = Math.min(this.maxEnergy, Math.max(6, seed) + mass);
-    cell.occupancy = [0, 0, 0, 0, 0];
+    cell.occupancy = emptyOccupancy();
     this.captureCount[owner]++;
     this.events.onCapture(cell, owner, prev);
   }
@@ -364,6 +382,7 @@ export class Engine {
     const from = this.cells[fromId];
     const to = this.cells[toId];
     if (!from || !to || from.owner === 0 || from.energy < 4) return false;
+    if (this.lineBlocked(from.x, from.y, to.x, to.y)) return false;
     const mine = this.tentacles.filter((t) => t.from === fromId);
     if (mine.length >= tentacleSlots(from.energy) || mine.some((t) => t.to === toId)) return false;
     this.tentacles.push({
@@ -430,7 +449,9 @@ export class Engine {
           ? 0.82
           : 0.46;
     const pace = this.mode === "attract" || this.mode === "spectate" ? 0.85 : 1;
-    for (let owner = 1; owner <= 4; owner++) {
+    let thought = 0;
+    const thinkCap = this.factionMax > 8 ? 3 : this.factionMax;
+    for (let owner = 1; owner <= this.factionMax; owner++) {
       if (this.mode === "play" && owner === this.player) continue;
       if (!this.cells.some((c) => c.owner === owner)) continue;
       this.thinkAcc[owner] += dt * pace;
@@ -438,13 +459,16 @@ export class Engine {
       if (this.thinkAcc[owner] < interval + wobble) continue;
       this.thinkAcc[owner] = 0;
       this.think(owner);
+      thought++;
+      if (thought >= thinkCap) break;
     }
   }
 
   powerTables(): PowerTables {
-    const energy = [0, 0, 0, 0, 0];
-    const cellsN = [0, 0, 0, 0, 0];
-    const flow = new Array(25).fill(0);
+    const n = this.factionMax + 1;
+    const energy = emptyFactionStats();
+    const cellsN = emptyFactionStats();
+    const flow = new Array(n * n).fill(0);
     for (const c of this.cells) {
       if (c.owner !== 0) {
         energy[c.owner] += c.energy;
@@ -456,33 +480,34 @@ export class Engine {
       energy[t.owner] += mass;
       const to = this.cells[t.to];
       if (to && to.owner !== t.owner && t.owner !== 0 && to.owner !== 0) {
-        flow[t.owner * 5 + to.owner] += mass;
+        flow[t.owner * n + to.owner] += mass;
       }
     }
     let total = 0;
     let leader = 1;
     let best = -1;
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 1; i <= this.factionMax; i++) {
       total += energy[i];
       if (energy[i] > best) {
         best = energy[i];
         leader = i;
       }
     }
-    return { energy, cellsN, total: Math.max(1, total), leader, flow };
+    return { energy, cellsN, total: Math.max(1, total), leader, flow, stride: n };
   }
 
   macroFor(owner: number, targetOwner: number, dump: number, pow: PowerTables): MacroFeat {
-    const mine = Math.max(1, pow.energy[owner]);
-    const leadE = pow.energy[pow.leader];
+    const mine = Math.max(1, pow.energy[owner] ?? 0);
+    const leadE = pow.energy[pow.leader] ?? 0;
     const tgtE = pow.energy[targetOwner] ?? 0;
     let side = 0;
     let onMe = 0;
     let all = 0;
-    for (let a = 1; a <= 4; a++) {
-      for (let b = 1; b <= 4; b++) {
+    const n = pow.stride;
+    for (let a = 1; a <= this.factionMax; a++) {
+      for (let b = 1; b <= this.factionMax; b++) {
         if (a === b) continue;
-        const f = pow.flow[a * 5 + b];
+        const f = pow.flow[a * n + b];
         all += f;
         if (b === owner) onMe += f;
         if (a !== owner && b !== owner) side += f;
@@ -496,7 +521,7 @@ export class Engine {
         ? dominance * (1 - targetShare)
         : 0;
     let alive = 0;
-    for (let i = 1; i <= 4; i++) if (pow.energy[i] > 0) alive++;
+    for (let i = 1; i <= this.factionMax; i++) if (pow.energy[i] > 0) alive++;
     return {
       dominance,
       leaderDelta: leadE / mine,
@@ -518,7 +543,7 @@ export class Engine {
 
   /** Hard-ground legal set (HG-1a / HG-1b) for one think tick. */
   legalMoves(owner: number): LegalSet {
-    return legalThinkMoves(owner, this.cells, this.tentacles, this.maxEnergy);
+    return legalThinkMoves(owner, this.cells, this.tentacles, this.maxEnergy, this.barriers);
   }
 
   thinkNet(owner: number, net: Net): void {
@@ -670,10 +695,34 @@ export class Engine {
       : this.silent && cuts.length > 0 && Math.random() < 0.16
         ? pick(cuts)
         : pick(cands);
-    // HG-1b must clear the dead pipe this tick; do not drop a forced cut on the -.08 floor.
-    if (!legal.forcedCuts && chosen.score < -0.08) return;
-    if (chosen.kind === "cut") this.cutTentacle(chosen.tent, chosen.cutT);
-    else this.send(chosen.from, chosen.to);
+    const ranked = cands.slice().sort((a, b) => b.score - a.score);
+    if (legal.forcedCuts) {
+      const seen = new Set<number>();
+      for (const c of ranked) {
+        if (c.kind !== "cut") continue;
+        if (seen.has(c.tent.id)) continue;
+        seen.add(c.tent.id);
+        this.cutTentacle(c.tent, c.cutT);
+      }
+      return;
+    }
+    const cap = this.silent ? CONCURRENT_ACTIONS : 4;
+    const usedTent = new Set<number>();
+    let applied = 0;
+    const queue = [chosen, ...ranked.filter((c) => c !== chosen)];
+    for (const c of queue) {
+      if (applied >= cap) break;
+      if (c.score < -0.08) continue;
+      if (c.kind === "cut") {
+        if (usedTent.has(c.tent.id)) continue;
+        if (!this.tentacles.includes(c.tent)) continue;
+        usedTent.add(c.tent.id);
+        this.cutTentacle(c.tent, c.cutT);
+        applied++;
+      } else if (this.send(c.from, c.to)) {
+        applied++;
+      }
+    }
   }
 
   think(owner: number): void {

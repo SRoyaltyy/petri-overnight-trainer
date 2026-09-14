@@ -5,6 +5,8 @@ import {
   EVOLVE_EVERY,
   LEAGUE_EVERY_GENS,
   MATCH_SECONDS,
+  MATCH_SECONDS_SWARM,
+  MAX_FACTIONS,
   POPULATION,
   type Book,
   type DishId,
@@ -16,6 +18,10 @@ import { factionCount, tentacleSlots, reachOf } from "./maps.js";
 
 function isGhost(s: Strain): boolean {
   return s.id.startsWith("g-");
+}
+
+function matchCapTime(dish: DishId): number {
+  return dish === "swarm" ? MATCH_SECONDS_SWARM : MATCH_SECONDS;
 }
 
 function updateElo(a: Strain, b: Strain, aWon: boolean, k = 20): void {
@@ -85,23 +91,18 @@ function impliedWinner(winner: number | null, seats: number[], scores: number[])
 }
 
 export function scoreMatch(engine: Engine, seats: number[]): { winner: number | null; scores: number[] } {
-  const cellsN = [0, 0, 0, 0, 0];
-  const energy = [0, 0, 0, 0, 0];
+  const cap = Math.max(5, engine.factionCount() + 1);
+  const cellsN = new Array(cap).fill(0);
+  const energy = new Array(cap).fill(0);
   const incoming = new Int16Array(engine.cells.length);
-  const aimed = [
-    new Int16Array(0),
-    new Int16Array(engine.cells.length),
-    new Int16Array(engine.cells.length),
-    new Int16Array(engine.cells.length),
-    new Int16Array(engine.cells.length),
-  ];
+  const aimed: Int16Array[] = Array.from({ length: cap }, () => new Int16Array(engine.cells.length));
   const outgoing = new Int16Array(engine.cells.length);
   for (const t of engine.tentacles) {
     if (t.from < engine.cells.length) outgoing[t.from]++;
     const to = engine.cells[t.to];
     if (!to) continue;
     if (to.owner !== t.owner && t.owner !== 0) incoming[t.to]++;
-    if (to.owner !== t.owner && to.owner !== 0 && t.owner > 0) aimed[t.owner][t.to]++;
+    if (to.owner !== t.owner && to.owner !== 0 && t.owner > 0 && t.owner < aimed.length) aimed[t.owner][t.to]++;
   }
   for (const c of engine.cells) {
     if (c.owner !== 0) {
@@ -116,11 +117,13 @@ export function scoreMatch(engine: Engine, seats: number[]): { winner: number | 
     engine.winner && engine.winner > 0 ? engine.winner : alive.length === 1 ? alive[0] : null;
   const multi = seats.length >= 3;
   const rankOrder = seats.slice().sort((a, b) => (cellsN[b] === cellsN[a] ? energy[b] - energy[a] : cellsN[b] - cellsN[a]));
-  const place = [0, 0, 0, 0, 0];
+  const place = new Array(cap).fill(0);
   rankOrder.forEach((s, i) => {
     place[s] = i + 1;
   });
-  const placeBonus = multi ? [0, 220, 70, 12, -28] : [0, 180, -8, -8, -8];
+  const placeBonus = multi
+    ? [0, 220, 70, 12, -8, -16, -22, -28, -32, -36, -40]
+    : [0, 180, -8, -8, -8];
   let richest = seats[0];
   let richestE = -1;
   for (const s of seats) {
@@ -131,7 +134,7 @@ export function scoreMatch(engine: Engine, seats: number[]): { winner: number | 
   }
   const totalE = Math.max(1, energy.reduce((a, b) => a + b, 0));
   const runaway = richestE / totalE > 0.48;
-  const scores = [0, 0, 0, 0, 0];
+  const scores = new Array(cap).fill(0);
 
   for (const seat of seats) {
     const drainRate = engine.time > 1 ? engine.drainCount[seat] / engine.time : 0;
@@ -247,7 +250,13 @@ export class Lab {
   begin(): void {
     this.book = padBook(this.book, POPULATION);
     const ghost = this.book.league.length > 0 && this.book.games % 4 === 3;
-    const dish: DishId = ghost ? "slide" : this.book.games % 7 === 6 ? "royale" : "slide";
+    const dish: DishId = ghost
+      ? "slide"
+      : this.book.games % 8 === 7
+        ? "swarm"
+        : this.book.games % 7 === 6
+          ? "royale"
+          : "slide";
     this.seats = Array.from({ length: factionCount(dish) }, (_, i) => i + 1);
     const rot = (this.book.games * 3) % this.book.strains.length;
     this.group = [];
@@ -273,7 +282,7 @@ export class Lab {
     }
     const nets = this.group.map((s) => netFromWeights(s.w));
     this.engine = new Engine(dish, "live", "spectate", EMPTY_EVENTS, true, true);
-    this.engine.brains = [null, null, null, null, null];
+    this.engine.brains = Array.from({ length: MAX_FACTIONS + 1 }, () => null);
     for (let i = 0; i < this.seats.length; i++) this.engine.brains[this.seats[i]] = nets[i];
   }
 
@@ -295,7 +304,7 @@ export class Lab {
     const t0 = performance.now();
     let done = 0;
     while (done < matchCap && performance.now() - t0 < budget) {
-      if (!this.engine || this.engine.ended || this.engine.time >= MATCH_SECONDS) {
+      if (!this.engine || this.engine.ended || this.engine.time >= matchCapTime(this.engine.dishId)) {
         if (this.engine) {
           this.settle();
           done++;
@@ -304,9 +313,9 @@ export class Lab {
         }
         this.begin();
       }
-      this.engine?.advance(30, MATCH_SECONDS);
+      this.engine?.advance(30, matchCapTime(this.engine?.dishId ?? "slide"));
     }
-    if (this.engine && (this.engine.ended || this.engine.time >= MATCH_SECONDS || this.engine.time > 1)) {
+    if (this.engine && (this.engine.ended || this.engine.time >= matchCapTime(this.engine.dishId) || this.engine.time > 1)) {
       this.settle();
       done++;
       opts.onMatch?.(done, this.book);

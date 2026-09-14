@@ -156,15 +156,39 @@ candidates 28% of the time and forces a cut candidate 16% of the time.
 
 ## Silent match
 
-- Dish: mostly `slide`; `royale` when `games % 7 === 6`; ghost duel (`slide`,
-  live vs `g-*` league ancestor) when `league.length > 0 && games % 4 === 3`
+- Dish mix:
+  - ghost duel (`slide`) when `league.length > 0 && games % 4 === 3`
+  - compact **Swarm** (8 colours, walls, ~70 cells) when `games % 8 === 7`
+  - `royale` with reefs when `games % 7 === 6`
+  - otherwise `slide` with reefs
 - Difficulty `live`, mode `spectate`, `silent = true`
-- Step `1/60` s, match length 36 s (or last colour standing)
+- Step `1/60` s, match length 36 s (48 s on Swarm) or last colour standing
 - Think interval for a net on live: 0.28 s, spectate pace 0.85
+- **Concurrent actions:** silent Lab applies up to 2 legal moves per think
+  (forced HG-1b cuts still dump every dead support pipe)
 - Legal send: owned cell, energy ≥ 4, under tentacle cap
-  (`energy ≥ 120 → 3`, `≥ 15 → 2`, else 1), no duplicate edge
+  (`energy ≥ 120 → 3`, `≥ 15 → 2`, else 1), no duplicate edge, **straight
+  line does not intersect a barrier**
 - Legal cut: own tentacle; host mass refunds to the source, burrow mass
   delivers at the tip (locked cuts dump the far side as spray / fail)
+
+## Level design (v6 maps, still arch-5 nets)
+
+The live app added Swarm (up to 32 colours, hundreds of cells, reefs that
+block a straight tentacle). Overnight keeps the **546-float arch-5 book**
+so Petri can still pull `latest.json`. Training uses a compact Swarm
+(`TRAIN_SWARM_FACTIONS = 8`) so a 12-minute slice still lands tens of
+thousands of games, plus reefs on Slide/Royale so walls are not a
+zero-shot at pull time.
+
+Barriers are open segments with gaps. They never sit on a cell and never
+close a loop around one. `send(from, to)` is illegal if the cell-center
+segment intersects any reef.
+
+Nets do not grow extra inputs: occupancy is indexed by owner id,
+`alive`/`dominance` already generalise past 4 colours, and a blocked
+send is simply missing from the legal set (same as out-of-range).
+
 
 ## Hard ground
 
