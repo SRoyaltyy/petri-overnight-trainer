@@ -1,0 +1,21 @@
+{
+  "name": "petri-overnight-trainer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Overnight neuroevolution trainer that publishes arch-5 Petri strain books",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "train": "tsx src/cli.ts",
+    "seed": "tsx src/cli.ts --seed",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
