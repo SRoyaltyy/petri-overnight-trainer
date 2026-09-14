@@ -24,6 +24,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -61,5 +64,31 @@ jobs:
           fi
           gen="$(node -e "const b=JSON.parse(require('fs').readFileSync('books/latest.json','utf8')); process.stdout.write(String(b.gen??0))")"
           games="$(node -e "const b=JSON.parse(require('fs').readFileSync('books/latest.json','utf8')); process.stdout.write(String(b.games??0))")"
-          git commit -m "chore: overnight book gen ${gen} games ${games}"
-          git push
+          msg="chore: overnight book gen ${gen} games ${games}"
+          git commit -m "${msg}"
+
+          # Snapshot this job's trained books so a rebase onto a moved main
+          # can keep them even if books/ conflicts (never force-push).
+          trained="$(mktemp -d)"
+          cp -a books/. "${trained}/"
+
+          publish() {
+            git fetch origin main
+            if ! git pull --rebase origin main; then
+              echo "Rebase conflict — keeping this job's books, other files from main"
+              git rebase --abort || true
+              git reset --hard origin/main
+              mkdir -p books
+              cp -a "${trained}/." books/
+              git add books
+              if ! git diff --staged --quiet; then
+                git commit -m "${msg}"
+              fi
+            fi
+            git push origin HEAD:main
+          }
+
+          if ! publish; then
+            echo "Push rejected; retrying once after rebase"
+            publish
+          fi
