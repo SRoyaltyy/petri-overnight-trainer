@@ -1,5 +1,5 @@
-import { reachOf, tentacleSlots } from "./maps.js";
-import { MAX_ENERGY, type Cell, type Tentacle } from "./types.js";
+import { pathBlocked, reachOf, tentacleSlots } from "./maps.js";
+import { MAX_ENERGY, type Barrier, type Cell, type Tentacle } from "./types.js";
 
 export interface LegalSend {
   kind: "send";
@@ -156,6 +156,7 @@ export function legalThinkMoves(
   cells: Cell[],
   tentacles: Tentacle[],
   maxEnergy = MAX_ENERGY,
+  barriers: Barrier[] = [],
 ): LegalSet {
   const dead = deadSupportPipes(owner, cells, tentacles, maxEnergy);
   if (dead.length > 0) {
@@ -179,6 +180,7 @@ export function legalThinkMoves(
       if (alreadyAimed(from.id, to.id, tentacles)) continue;
       const dist = Math.hypot(to.x - from.x, to.y - from.y);
       if (dist > reach) continue;
+      if (barriers.length && pathBlocked(from.x, from.y, to.x, to.y, barriers)) continue;
       // HG-1a
       if (to.owner === owner && isSaturatedSafeAlly(to, tentacles, maxEnergy, cells)) continue;
       sends.push({ kind: "send", from: from.id, to: to.id });
