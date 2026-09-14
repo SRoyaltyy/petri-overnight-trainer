@@ -1,4 +1,5 @@
 import { writeCutFeatures, writeSendFeatures } from "./features.js";
+import { legalThinkMoves, type LegalSet } from "./legal.js";
 import {
   cellRadius,
   factionCount,
@@ -515,6 +516,11 @@ export class Engine {
     return sum < 0.4 ? 0 : burrowAmt / sum;
   }
 
+  /** Hard-ground legal set (HG-1a / HG-1b) for one think tick. */
+  legalMoves(owner: number): LegalSet {
+    return legalThinkMoves(owner, this.cells, this.tentacles, this.maxEnergy);
+  }
+
   thinkNet(owner: number, net: Net): void {
     const n = this.cells.length;
     this.incoming.fill(0);
@@ -533,6 +539,9 @@ export class Engine {
         myCells++;
       }
     }
+    const legal = this.legalMoves(owner);
+    const legalSend = new Set(legal.sends.map((s) => `${s.from}->${s.to}`));
+    const legalCut = new Set(legal.cuts.map((c) => c.tentacleId));
     const pow = this.powerTables();
     const noisy = this.silent ? Math.random() > 0.72 : this.difficulty === "calm";
     const noise = this.silent
@@ -561,6 +570,7 @@ export class Engine {
         if (this.tentacles.some((t) => t.from === from.id && t.to === to.id)) continue;
         const dist = hypot(from.x, from.y, to.x, to.y);
         if (dist > reach) continue;
+        if (!legalSend.has(`${from.id}->${to.id}`)) continue;
         const macro = this.macroFor(owner, to.owner, Math.min(1, this.aimed[to.id] / 3), pow);
         writeSendFeatures(
           this.feat,
@@ -589,6 +599,7 @@ export class Engine {
     }
     for (const t of this.tentacles) {
       if (t.owner !== owner) continue;
+      if (!legalCut.has(t.id)) continue;
       const from = this.cells[t.from];
       const to = this.cells[t.to];
       if (!from || !to) continue;
@@ -654,8 +665,13 @@ export class Engine {
       return best;
     };
     const cuts = cands.filter((c) => c.kind === "cut");
-    const chosen = this.silent && cuts.length > 0 && Math.random() < 0.16 ? pick(cuts) : pick(cands);
-    if (chosen.score < -0.08) return;
+    const chosen = legal.forcedCuts
+      ? pick(cuts.length > 0 ? cuts : cands)
+      : this.silent && cuts.length > 0 && Math.random() < 0.16
+        ? pick(cuts)
+        : pick(cands);
+    // HG-1b must clear the dead pipe this tick; do not drop a forced cut on the -.08 floor.
+    if (!legal.forcedCuts && chosen.score < -0.08) return;
     if (chosen.kind === "cut") this.cutTentacle(chosen.tent, chosen.cutT);
     else this.send(chosen.from, chosen.to);
   }
