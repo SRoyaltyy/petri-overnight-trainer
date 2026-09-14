@@ -5,15 +5,19 @@ export const HIDDEN = 8;
 export const HEAD_SIZE = 273;
 export const POPULATION = 16;
 export const MATCH_SECONDS = 36;
-export const MATCH_SECONDS_SWARM = 48;
+export const MATCH_SECONDS_SWARM = 54;
 export const EVOLVE_EVERY = 10;
 export const LEAGUE_EVERY_GENS = 5;
 export const MAX_ENERGY = 200;
 export const DT = 1 / 60;
 export const BOOK_KEY = "petri-strains-v5";
 export const MAX_FACTIONS = 32;
-/** Compact Swarm for overnight: 8 colours, walls, ~70 cells. Full 32p is live-app only. */
+/**
+ * Compact Swarm for overnight: 8 colours, live reef recipe, ~60–90 cells on a
+ * 720-radius dish. Live Petri is 32 colours / radius 1120 / up to 220 cells.
+ */
 export const TRAIN_SWARM_FACTIONS = 8;
+export const TRAIN_SWARM_RADIUS = 720;
 export const CONCURRENT_ACTIONS = 2;
 
 export type DishId = "slide" | "culture" | "royale" | "swarm";
