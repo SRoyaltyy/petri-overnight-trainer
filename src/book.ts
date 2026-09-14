@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   ARCH,
@@ -136,7 +136,9 @@ export function loadBook(path: string): Book | null {
 export function saveBook(path: string, book: Book, overnight?: OvernightMeta): Book {
   const shaped = serializeBook(book, overnight);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(shaped, null, 2)}\n`);
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(shaped, null, 2)}\n`);
+  renameSync(tmp, path);
   return shaped;
 }
 

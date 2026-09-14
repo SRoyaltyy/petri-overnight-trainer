@@ -7,6 +7,7 @@ import type { OvernightMeta } from "./types.js";
 interface Args {
   budgetMs?: number;
   matches?: number;
+  checkpointMs: number;
   bookPath: string;
   historyDir: string;
   seed: boolean;
@@ -19,6 +20,7 @@ function parseArgs(argv: string[]): Args {
     historyDir: "books/history",
     seed: false,
     history: true,
+    checkpointMs: 60_000,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -30,6 +32,9 @@ function parseArgs(argv: string[]): Args {
       i++;
     } else if (a === "--matches" && next) {
       args.matches = Number(next);
+      i++;
+    } else if (a === "--checkpoint-ms" && next) {
+      args.checkpointMs = Number(next);
       i++;
     } else if (a === "--book" && next) {
       args.bookPath = next;
@@ -54,18 +59,39 @@ Usage:
   npm run seed
 
 Options:
-  --budget-ms N     Wall-clock cap in milliseconds
-  --matches N       Stop after N completed matches
-  --book PATH       Book JSON (default books/latest.json)
-  --history-dir D   Snapshot dir (default books/history)
-  --no-history      Do not write gen snapshots
-  --seed            Write a fresh random arch-5 book and exit
+  --budget-ms N       Wall-clock cap in milliseconds
+  --matches N         Stop after N completed matches
+  --checkpoint-ms N   Flush latest.json every N ms (default 60000; 0 = end only)
+  --book PATH         Book JSON (default books/latest.json)
+  --history-dir D     Snapshot dir (default books/history)
+  --no-history        Do not write gen snapshots
+  --seed              Write a fresh random arch-5 book and exit
 `);
+}
+
+function meta(lab: Lab, gamesBefore: number, genBefore: number, strengthBefore: number): OvernightMeta {
+  return {
+    trainedAt: new Date().toISOString(),
+    gamesAdded: lab.book.games - gamesBefore,
+    genBefore,
+    genAfter: lab.book.gen,
+    strengthBefore,
+    strengthAfter: lab.book.strength,
+    vsGhostAfter: lab.book.vsGhost,
+  };
+}
+
+function flush(lab: Lab, bookPath: string, historyDir: string, history: boolean, gamesBefore: number, genBefore: number, strengthBefore: number) {
+  const overnight = meta(lab, gamesBefore, genBefore, strengthBefore);
+  const written = saveBook(bookPath, lab.book, overnight);
+  if (history && written.gen !== genBefore) saveHistory(historyDir, written);
+  return written;
 }
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const bookPath = resolve(args.bookPath);
+  const historyDir = resolve(args.historyDir);
 
   if (args.seed) {
     const fresh = seedBook();
@@ -94,6 +120,24 @@ function main(): void {
   const lab = new Lab(start);
   const t0 = performance.now();
   let lastLog = t0;
+  let lastFlush = t0;
+  let flushed = false;
+
+  const persist = () => {
+    const written = flush(lab, bookPath, historyDir, args.history, gamesBefore, genBefore, strengthBefore);
+    flushed = true;
+    return written;
+  };
+
+  const onSignal = (sig: string) => {
+    console.log(`Caught ${sig}; flushing book…`);
+    const written = persist();
+    console.log(`Flushed gen=${written.gen} games=${written.games} strength=${written.strength.toFixed(1)}`);
+    process.exit(0);
+  };
+  process.on("SIGINT", () => onSignal("SIGINT"));
+  process.on("SIGTERM", () => onSignal("SIGTERM"));
+
   const played = lab.run({
     matches,
     budgetMs,
@@ -105,21 +149,14 @@ function main(): void {
         );
         lastLog = now;
       }
+      if (args.checkpointMs > 0 && now - lastFlush >= args.checkpointMs) {
+        persist();
+        lastFlush = now;
+      }
     },
   });
 
-  const overnight: OvernightMeta = {
-    trainedAt: new Date().toISOString(),
-    gamesAdded: lab.book.games - gamesBefore,
-    genBefore,
-    genAfter: lab.book.gen,
-    strengthBefore,
-    strengthAfter: lab.book.strength,
-    vsGhostAfter: lab.book.vsGhost,
-  };
-  const written = saveBook(bookPath, lab.book, overnight);
-  if (args.history && written.gen !== genBefore) saveHistory(resolve(args.historyDir), written);
-
+  const written = persist();
   const issues = validateBook(written);
   if (issues.length) {
     console.error("Trained book failed validation:", issues);
@@ -128,7 +165,7 @@ function main(): void {
 
   const ms = performance.now() - t0;
   console.log(
-    `Wrote ${bookPath}  matches=${played} games=${written.games} (+${overnight.gamesAdded}) gen=${written.gen} strength=${written.strength.toFixed(1)} in ${(ms / 1000).toFixed(1)}s`,
+    `Wrote ${bookPath}  matches=${played} games=${written.games} (+${written.overnight?.gamesAdded ?? 0}) gen=${written.gen} strength=${written.strength.toFixed(1)} in ${(ms / 1000).toFixed(1)}s`,
   );
 }
 

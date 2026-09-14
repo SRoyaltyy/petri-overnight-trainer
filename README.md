@@ -104,10 +104,20 @@ in-browser key.
 [`.github/workflows/overnight-train.yml`](.github/workflows/overnight-train.yml)
 
 - `schedule`: every 6 hours UTC (`0 */6 * * *`)
-- `workflow_dispatch`: run from the Actions tab; optional `budget_ms` /
-  `matches` inputs
+- Each scheduled job trains for **up to 5.5 hours** (runner timeout 355 min) in
+  ~12 minute slices. After every slice it commits `books/latest.json` so a
+  cancelled job loses at most one slice. `SIGINT`/`SIGTERM` also flush the book.
+- In-slice checkpoints dump `latest.json` every 60s.
+- `workflow_dispatch`: run from the Actions tab. Default budget is 5.5h
+  (`19800000` ms). Set `budget_ms` to `720000` for a 12-minute smoke, or
+  `matches` for a fixed game count.
+- `concurrency`: one trainer at a time; in-progress runs are not cancelled.
 - `permissions.contents: write` so the job can commit `books/**`
-- Wall-clock train cap ~12 minutes (workflow timeout 25 minutes)
+
+The Node sim is the fast path (no canvas, no rAF). A 12-minute slice has
+landed ~50k games. The old 12-minute-every-6-hours cadence was the throttle;
+this layout spends almost the whole GitHub-hosted 6-hour job cap on training
+(~22 hours of CPU per day).
 
 The job uses the default `GITHUB_TOKEN`. No other secrets are required for
 training or committing. If you later add a Petri-side pull from a private
@@ -115,8 +125,9 @@ clone, that token lives in the Grok app, not here.
 
 ### Manual dispatch
 
-Actions → Overnight train → Run workflow. Leave `budget_ms` at `720000` for
-a normal overnight slice, or set `matches` for a short smoke run.
+Actions → Overnight train → Run workflow. Leave defaults for a full 5.5h
+grind, set `budget_ms` to `720000` for a 12-minute slice, or set `matches`
+for a short smoke run.
 
 ### Seeding
 

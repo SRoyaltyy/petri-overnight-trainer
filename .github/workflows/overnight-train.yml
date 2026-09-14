@@ -2,25 +2,34 @@ name: Overnight train
 
 on:
   schedule:
+    # Long slices; a 6h job + this cron ≈ continuous on one runner.
     - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       budget_ms:
-        description: Wall-clock training budget in milliseconds
+        description: Total wall-clock training budget in milliseconds (schedule default 5.5h)
+        required: false
+        default: "19800000"
+      slice_ms:
+        description: Commit+push cadence in milliseconds
         required: false
         default: "720000"
       matches:
-        description: Optional match cap (empty = budget only)
+        description: Optional match cap (empty = budget only; skips slice loop)
         required: false
         default: ""
 
 permissions:
   contents: write
 
+concurrency:
+  group: petri-overnight-train
+  cancel-in-progress: false
+
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 355
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,55 +49,97 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Train
+      - name: Train and publish
         env:
-          BUDGET_MS: ${{ github.event.inputs.budget_ms || '720000' }}
+          TOTAL_MS: ${{ github.event.inputs.budget_ms || '19800000' }}
+          SLICE_MS: ${{ github.event.inputs.slice_ms || '720000' }}
           MATCHES: ${{ github.event.inputs.matches }}
-        run: |
-          set -euo pipefail
-          args=(--budget-ms "${BUDGET_MS}")
-          if [ -n "${MATCHES}" ]; then
-            args+=(--matches "${MATCHES}")
-          fi
-          npm run train -- "${args[@]}"
-
-      - name: Commit books
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add books
-          if git diff --staged --quiet; then
-            echo "No book changes"
-            exit 0
-          fi
-          gen="$(node -e "const b=JSON.parse(require('fs').readFileSync('books/latest.json','utf8')); process.stdout.write(String(b.gen??0))")"
-          games="$(node -e "const b=JSON.parse(require('fs').readFileSync('books/latest.json','utf8')); process.stdout.write(String(b.games??0))")"
-          msg="chore: overnight book gen ${gen} games ${games}"
-          git commit -m "${msg}"
-
-          # Snapshot this job's trained books so a rebase onto a moved main
-          # can keep them even if books/ conflicts (never force-push).
-          trained="$(mktemp -d)"
-          cp -a books/. "${trained}/"
 
           publish() {
-            git fetch origin main
-            if ! git pull --rebase origin main; then
-              echo "Rebase conflict — keeping this job's books, other files from main"
-              git rebase --abort || true
-              git reset --hard origin/main
-              mkdir -p books
-              cp -a "${trained}/." books/
-              git add books
-              if ! git diff --staged --quiet; then
-                git commit -m "${msg}"
-              fi
+            local msg="$1"
+            git add books
+            if git diff --staged --quiet; then
+              echo "No book changes"
+              return 0
             fi
-            git push origin HEAD:main
+            git commit -m "${msg}"
+            local trained
+            trained="$(mktemp -d)"
+            cp -a books/. "${trained}/"
+            push_with_rebase() {
+              git fetch origin main
+              if ! git pull --rebase origin main; then
+                echo "Rebase conflict — keeping this job's books, other files from main"
+                git rebase --abort || true
+                git reset --hard origin/main
+                mkdir -p books
+                cp -a "${trained}/." books/
+                git add books
+                if ! git diff --staged --quiet; then
+                  git commit -m "${msg}"
+                fi
+              fi
+              git push origin HEAD:main
+            }
+            if ! push_with_rebase; then
+              echo "Push rejected; retrying once after rebase"
+              push_with_rebase
+            fi
           }
 
-          if ! publish; then
-            echo "Push rejected; retrying once after rebase"
-            publish
+          book_msg() {
+            node -e "const b=JSON.parse(require('fs').readFileSync('books/latest.json','utf8')); process.stdout.write('chore: overnight book gen ' + (b.gen??0) + ' games ' + (b.games??0))"
+          }
+
+          train_once() {
+            local budget="$1"
+            local args=(--budget-ms "${budget}" --checkpoint-ms 60000)
+            if [ -n "${MATCHES}" ]; then
+              args+=(--matches "${MATCHES}")
+            fi
+            npm run train -- "${args[@]}"
+            publish "$(book_msg)"
+          }
+
+          if [ -n "${MATCHES}" ]; then
+            train_once "${TOTAL_MS:-720000}"
+            exit 0
           fi
+
+          total="${TOTAL_MS:-19800000}"
+          slice="${SLICE_MS:-720000}"
+          if ! [[ "${total}" =~ ^[0-9]+$ ]]; then total=19800000; fi
+          if ! [[ "${slice}" =~ ^[0-9]+$ ]]; then slice=720000; fi
+          if [ "${slice}" -lt 20000 ]; then slice=20000; fi
+
+          start_ms="$(date +%s%3N)"
+          # date +%s%3N is GNU; fall back to seconds.
+          if ! [[ "${start_ms}" =~ ^[0-9]+$ ]]; then
+            start_s="$(date +%s)"
+            deadline_s=$((start_s + total / 1000))
+            while [ "$(date +%s)" -lt "${deadline_s}" ]; do
+              remain_s=$((deadline_s - $(date +%s)))
+              remain_ms=$((remain_s * 1000))
+              chunk="${slice}"
+              if [ "${remain_ms}" -lt "${chunk}" ]; then chunk="${remain_ms}"; fi
+              if [ "${chunk}" -lt 20000 ]; then break; fi
+              echo "Slice budget ${chunk}ms  remaining ~${remain_s}s"
+              train_once "${chunk}"
+            done
+            exit 0
+          fi
+
+          deadline=$((start_ms + total))
+          while true; do
+            now="$(date +%s%3N)"
+            remain=$((deadline - now))
+            if [ "${remain}" -lt 20000 ]; then break; fi
+            chunk="${slice}"
+            if [ "${remain}" -lt "${chunk}" ]; then chunk="${remain}"; fi
+            echo "Slice budget ${chunk}ms  remaining ${remain}ms"
+            train_once "${chunk}"
+          done
