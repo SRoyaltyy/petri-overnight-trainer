@@ -166,6 +166,24 @@ candidates 28% of the time and forces a cut candidate 16% of the time.
 - Legal cut: own tentacle; host mass refunds to the source, burrow mass
   delivers at the tip (locked cuts dump the far side as spray / fail)
 
+## Hard ground
+
+Trainer-only legal-move filters applied when candidates are built
+(`src/legal.ts` → `Engine.legalMoves` / `thinkNet`). Book arch and the 546-float
+layout are unchanged.
+
+**Saturated safe ally.** Same-owner target `T` when all of: `T.energy >= 200`,
+no enemy tentacle onto `T` (growing / latched / locked), and `T` itself is not
+`growing` an outbound tentacle.
+
+- **HG-1a.** `send(from, to=T)` is not legal. It is never scored or sampled.
+  Send to that ally stays legal if `T` is under attack, growing outbound, or
+  below 200.
+- **HG-1b.** An own tentacle `L` with `L.to == T` is a dead support pipe. If the
+  acting faction has any this think tick, the legal set is **only** cuts on
+  those pipes (any cutT). The `-.08` score floor is skipped so the pipe is
+  actually cleared — a live feed into a full, safe ally just burns a slot.
+
 ## Evolution (every 10 games)
 
 Fitness EMA: `fitness = fitness * 0.7 + matchScore * 0.3`.
