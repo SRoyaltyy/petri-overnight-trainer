@@ -35,16 +35,36 @@ export function hasGrowingOutbound(cell: Cell, tentacles: Tentacle[]): boolean {
   return tentacles.some((t) => t.from === cell.id && t.owner === cell.owner && t.state === "growing");
 }
 
-/** Same-owner T at cap, not under attack, not growing an outbound pipe. */
+/**
+ * HG-3: T is spending on an attack pipe — growing, or latched/locked onto
+ * a cell that is not the same owner (enemy or neutral). Ally-to-ally
+ * latched/locked pipes are idle support, not spend.
+ */
+export function hasActiveOutboundSpend(
+  cell: Cell,
+  tentacles: Tentacle[],
+  cells: Cell[] = [],
+): boolean {
+  if (hasGrowingOutbound(cell, tentacles)) return true;
+  return tentacles.some((t) => {
+    if (t.from !== cell.id || t.owner !== cell.owner) return false;
+    if (t.state !== "latched" && t.state !== "locked") return false;
+    const dest = cells[t.to];
+    return !!dest && dest.owner !== cell.owner;
+  });
+}
+
+/** Same-owner T at cap, not under attack, no active outbound spend (HG-3). */
 export function isSaturatedSafeAlly(
   cell: Cell,
   tentacles: Tentacle[],
   maxEnergy = MAX_ENERGY,
+  cells: Cell[] = [],
 ): boolean {
   if (cell.owner === 0) return false;
   if (cell.energy < maxEnergy) return false;
   if (hostileIncomingCount(cell, tentacles) > 0) return false;
-  if (hasGrowingOutbound(cell, tentacles)) return false;
+  if (hasActiveOutboundSpend(cell, tentacles, cells)) return false;
   return true;
 }
 
@@ -57,7 +77,7 @@ export function deadSupportPipes(
   return tentacles.filter((t) => {
     if (t.owner !== owner) return false;
     const dest = cells[t.to];
-    return !!dest && dest.owner === owner && isSaturatedSafeAlly(dest, tentacles, maxEnergy);
+    return !!dest && dest.owner === owner && isSaturatedSafeAlly(dest, tentacles, maxEnergy, cells);
   });
 }
 
@@ -127,6 +147,9 @@ export function isFortifiedEnemy(
  * HG-1b: if any dead support pipe exists, the set is only cuts on those pipes.
  * HG-2: if any easy-prey sends exist, drop fortified *enemy* sends only.
  *        Ally snowball (sub-200 / threatened / growing-out) stays legal.
+ * HG-3: saturated-safe requires no active outbound spend. Growing, or
+ *        latched/locked onto enemy/neutral, lifts the ban so inbound feeds
+ *        can hold the 200 cliff. Latched/locked onto an ally does not.
  */
 export function legalThinkMoves(
   owner: number,
@@ -157,7 +180,7 @@ export function legalThinkMoves(
       const dist = Math.hypot(to.x - from.x, to.y - from.y);
       if (dist > reach) continue;
       // HG-1a
-      if (to.owner === owner && isSaturatedSafeAlly(to, tentacles, maxEnergy)) continue;
+      if (to.owner === owner && isSaturatedSafeAlly(to, tentacles, maxEnergy, cells)) continue;
       sends.push({ kind: "send", from: from.id, to: to.id });
     }
   }
