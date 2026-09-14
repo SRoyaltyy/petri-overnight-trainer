@@ -237,6 +237,15 @@ export function settleBook(
   return next.games > 0 && next.games % EVOLVE_EVERY === 0 ? evolve(next) : next;
 }
 
+export function pickDish(games: number, hasLeague: boolean): DishId {
+  // Ghost duels stay on Slide. Do NOT use a modulus that is a subset of
+  // games % 4 === 3 (the old games % 8 === 7 never fired once the league existed).
+  if (hasLeague && games % 4 === 3) return "slide";
+  if (games % 4 === 1) return "swarm";
+  if (games % 7 === 6) return "royale";
+  return "slide";
+}
+
 export class Lab {
   book: Book;
   engine: Engine | null = null;
@@ -250,13 +259,7 @@ export class Lab {
   begin(): void {
     this.book = padBook(this.book, POPULATION);
     const ghost = this.book.league.length > 0 && this.book.games % 4 === 3;
-    const dish: DishId = ghost
-      ? "slide"
-      : this.book.games % 8 === 7
-        ? "swarm"
-        : this.book.games % 7 === 6
-          ? "royale"
-          : "slide";
+    const dish: DishId = pickDish(this.book.games, this.book.league.length > 0);
     this.seats = Array.from({ length: factionCount(dish) }, (_, i) => i + 1);
     const rot = (this.book.games * 3) % this.book.strains.length;
     this.group = [];

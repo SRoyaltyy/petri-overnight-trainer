@@ -1,11 +1,19 @@
 import {
   MAX_ENERGY,
   TRAIN_SWARM_FACTIONS,
+  TRAIN_SWARM_RADIUS,
   type Barrier,
   type CellTemplate,
   type DishId,
   type DishTemplate,
 } from "./types.js";
+
+export const DISH_RADIUS = 360;
+export const MAX_CELLS = 24;
+export const MAX_SWARM_CELLS_TRAIN = 96;
+export const MIN_CELL_GAP = 70;
+export const SWARM_CELL_GAP = 48;
+const BARRIER_CLEARANCE = 52;
 
 export function cellRadius(energy: number): number {
   return 20 + Math.sqrt(Math.max(energy, 0)) * 2.05;
@@ -111,9 +119,9 @@ export const ROYALE: DishTemplate = {
 export const SWARM: DishTemplate = {
   id: "swarm",
   name: "Swarm",
-  blurb: "Many colours. Walls. Bottlenecks.",
+  blurb: "Thirty-two colours. Hundreds of cells. Walls.",
   maxEnergy: 200,
-  radius: 560,
+  radius: TRAIN_SWARM_RADIUS,
   cells: [],
   barriers: [],
 };
@@ -133,19 +141,18 @@ export function factionCount(dish: DishId): number {
 }
 
 export function dishRadiusOf(id: DishId): number {
-  return id === "swarm" ? 560 : 360;
+  return id === "swarm" ? TRAIN_SWARM_RADIUS : DISH_RADIUS;
 }
 
-const BARRIER_CLEARANCE = 52;
-
-function clampToDish(x: number, y: number, bound: number): { x: number; y: number } {
-  const n = Math.hypot(x, y);
-  if (n <= bound || n < 1e-6) return { x, y };
-  const s = bound / n;
+function clampToDish(x: number, y: number, radius: number): { x: number; y: number } {
+  const d = Math.hypot(x, y);
+  const max = radius * 0.84;
+  if (d <= max || d < 1e-6) return { x, y };
+  const s = max / d;
   return { x: x * s, y: y * s };
 }
 
-function roomFor(cells: CellTemplate[], x: number, y: number, energy: number, gap: number): boolean {
+function fits(cells: CellTemplate[], x: number, y: number, energy: number, gap: number): boolean {
   const r = cellRadius(energy);
   for (const c of cells) {
     const need = gap + (r + cellRadius(c.energy)) * 0.22;
@@ -156,21 +163,21 @@ function roomFor(cells: CellTemplate[], x: number, y: number, energy: number, ga
 
 function tryPlace(
   cells: CellTemplate[],
-  x: number,
-  y: number,
+  x0: number,
+  y0: number,
   owner: number,
   energy: number,
   captureNeed: number | undefined,
   rng: () => number,
-  bound: number,
+  radius: number,
   gap: number,
   attempts = 36,
 ): boolean {
-  for (let s = 0; s < attempts; s++) {
-    const dist = s === 0 ? 0 : 18 + rng() * 90;
-    const ang = rng() * Math.PI * 2;
-    const p = clampToDish(x + Math.cos(ang) * dist, y + Math.sin(ang) * dist, bound);
-    if (!roomFor(cells, p.x, p.y, energy, gap)) continue;
+  for (let k = 0; k < attempts; k++) {
+    const jitter = k === 0 ? 0 : 18 + rng() * 90;
+    const a = rng() * Math.PI * 2;
+    const p = clampToDish(x0 + Math.cos(a) * jitter, y0 + Math.sin(a) * jitter, radius);
+    if (!fits(cells, p.x, p.y, energy, gap)) continue;
     const cell: CellTemplate = { x: p.x, y: p.y, owner, energy };
     if (captureNeed != null) cell.captureNeed = captureNeed;
     cells.push(cell);
@@ -207,41 +214,42 @@ function barrierClearOfCells(b: Barrier, cells: CellTemplate[]): boolean {
 }
 
 function tryWall(walls: Barrier[], cells: CellTemplate[], x1: number, y1: number, x2: number, y2: number): boolean {
-  if (Math.hypot(x2 - x1, y2 - y1) < 70) return false;
+  if (Math.hypot(x2 - x1, y2 - y1) < 80) return false;
   const b: Barrier = { x1, y1, x2, y2 };
   if (!barrierClearOfCells(b, cells)) return false;
   walls.push(b);
   return true;
 }
 
-function placeBarriers(cells: CellTemplate[], radius: number, rng: () => number, density: "small" | "swarm"): Barrier[] {
+/** Live-app reef recipe: 8–10 radial spokes with gaps + 4–6 broken chords. */
+function placeBarriers(cells: CellTemplate[], radius: number, rng: () => number): Barrier[] {
   const walls: Barrier[] = [];
-  const spokes = density === "swarm" ? 6 + Math.floor(rng() * 3) : 3 + Math.floor(rng() * 2);
+  const spokes = 8 + Math.floor(rng() * 3);
   const a0 = rng() * Math.PI * 2;
-  const outer = density === "swarm" ? 0.58 : 0.55;
   for (let i = 0; i < spokes; i++) {
     const ang = a0 + (i / spokes) * Math.PI * 2 + (rng() - 0.5) * 0.12;
     const cs = Math.cos(ang);
     const sn = Math.sin(ang);
-    const gapAt = 0.32 + rng() * 0.1;
-    const gapW = 0.05 + rng() * 0.03;
+    const gapAt = 0.34 + rng() * 0.08;
+    const gapW = 0.055 + rng() * 0.03;
     const rA = (0.14 + rng() * 0.04) * radius;
     const rB = (gapAt - gapW) * radius;
     const rC = (gapAt + gapW) * radius;
-    const rD = (outer + rng() * 0.04) * radius;
+    const rD = (0.58 + rng() * 0.04) * radius;
     tryWall(walls, cells, cs * rA, sn * rA, cs * rB, sn * rB);
     tryWall(walls, cells, cs * rC, sn * rC, cs * rD, sn * rD);
   }
-  const chords = density === "swarm" ? 3 + Math.floor(rng() * 2) : 1 + Math.floor(rng() * 2);
+
+  const chords = 4 + Math.floor(rng() * 3);
   for (let i = 0; i < chords; i++) {
     const ang = rng() * Math.PI * 2;
-    const midR = (0.26 + rng() * 0.2) * radius;
+    const midR = (0.28 + rng() * 0.22) * radius;
     const mx = Math.cos(ang) * midR;
     const my = Math.sin(ang) * midR;
     const tx = -Math.sin(ang);
     const ty = Math.cos(ang);
-    const half = (0.14 + rng() * 0.12) * radius;
-    const gap = (0.04 + rng() * 0.03) * radius;
+    const half = (0.16 + rng() * 0.14) * radius;
+    const gap = (0.045 + rng() * 0.03) * radius;
     tryWall(walls, cells, mx - tx * half, my - ty * half, mx - tx * gap, my - ty * gap);
     tryWall(walls, cells, mx + tx * gap, my + ty * gap, mx + tx * half, my + ty * half);
   }
@@ -250,37 +258,67 @@ function placeBarriers(cells: CellTemplate[], radius: number, rng: () => number,
 
 function cellClearOfBarriers(x: number, y: number, energy: number, walls: Barrier[]): boolean {
   const need = cellRadius(energy) + BARRIER_CLEARANCE;
-  for (const w of walls) if (closestSegDist(x, y, w) < need) return false;
+  for (const w of walls) {
+    if (closestSegDist(x, y, w) < need) return false;
+  }
   return true;
 }
 
+/**
+ * Compact overnight Swarm. Same generator as the live 32-colour / radius-1120
+ * dish, scaled to TRAIN_SWARM_FACTIONS on TRAIN_SWARM_RADIUS so a slice still
+ * finishes tens of thousands of games. Walls, home placement, and satellite
+ * geometry match the live recipe.
+ */
 function makeSwarm(rng: () => number): DishTemplate {
-  const radius = 560;
+  const radius = TRAIN_SWARM_RADIUS;
   const cells: CellTemplate[] = [];
   const players = TRAIN_SWARM_FACTIONS;
   const angle0 = rng() * Math.PI * 2;
-  const homeR = radius * 0.74;
+  const homeR = radius * 0.76;
   for (let p = 0; p < players; p++) {
     const owner = p + 1;
-    const ang = angle0 + (p / players) * Math.PI * 2 + (rng() - 0.5) * 0.08;
+    const ang = angle0 + (p / players) * Math.PI * 2 + (rng() - 0.5) * 0.04;
     const hx = Math.cos(ang) * homeR;
     const hy = Math.sin(ang) * homeR;
-    tryPlace(cells, hx, hy, owner, 28 + rng() * 28, undefined, rng, radius * 0.84, 48, 64);
+    const coreE = 28 + rng() * 28;
+    tryPlace(cells, hx, hy, owner, coreE, undefined, rng, radius, SWARM_CELL_GAP, 64);
     const a2 = ang + (rng() - 0.5) * 0.55;
-    const r2 = 50 + rng() * 40;
-    tryPlace(cells, hx + Math.cos(a2) * r2, hy + Math.sin(a2) * r2, owner, 10 + rng() * 16, undefined, rng, radius * 0.84, 48, 64);
+    const r2 = 56 + rng() * 50;
+    tryPlace(
+      cells,
+      hx + Math.cos(a2) * r2,
+      hy + Math.sin(a2) * r2,
+      owner,
+      10 + rng() * 16,
+      undefined,
+      rng,
+      radius,
+      SWARM_CELL_GAP,
+      64,
+    );
   }
-  const barriers = placeBarriers(cells, radius, rng, "swarm");
+
+  const barriers = placeBarriers(cells, radius, rng);
+
+  const target = 40 + Math.floor(rng() * 16);
   let guard = 0;
-  const target = 28 + Math.floor(rng() * 12);
-  while (cells.filter((c) => c.owner === 0).length < target && guard++ < 700) {
+  while (cells.filter((c) => c.owner === 0).length < target && guard++ < 1200) {
     const a = rng() * Math.PI * 2;
-    const r = Math.sqrt(rng()) * radius * 0.68;
+    const r = Math.sqrt(rng()) * radius * 0.7;
     const x = Math.cos(a) * r;
     const y = Math.sin(a) * r;
+    const need = 6 + Math.floor(rng() * 10);
     if (!cellClearOfBarriers(x, y, 0, barriers)) continue;
-    tryPlace(cells, x, y, 0, 0, 6 + Math.floor(rng() * 10), rng, radius * 0.84, 48, 20);
+    const before = cells.length;
+    if (!tryPlace(cells, x, y, 0, 0, need, rng, radius, SWARM_CELL_GAP, 20)) continue;
+    const placed = cells[cells.length - 1];
+    if (cells.length > before && !cellClearOfBarriers(placed.x, placed.y, 0, barriers)) {
+      cells.pop();
+    }
   }
+
+  if (cells.length > MAX_SWARM_CELLS_TRAIN) cells.length = MAX_SWARM_CELLS_TRAIN;
   return {
     id: "swarm",
     name: "Swarm",
@@ -292,59 +330,55 @@ function makeSwarm(rng: () => number): DishTemplate {
   };
 }
 
-/** Client `un`: procedural dish, fallback to the authored layout if a colour is missing. */
+/** Client `randomDish`: procedural dish, authored fallback if a colour is missing. */
 export function generateDish(id: DishId, rng: () => number = Math.random): DishTemplate {
   if (id === "swarm") return makeSwarm(rng);
 
-  const authored = DISHES[id];
-  const factions = factionCount(id);
-  const extrasPer = id === "royale" ? 2 + Math.floor(rng() * 3) : 2 + Math.floor(rng() * 2);
+  const base = DISHES[id];
+  const players = factionCount(id);
+  const radius = DISH_RADIUS;
+  const ownedPer = id === "royale" ? 2 + Math.floor(rng() * 3) : 2 + Math.floor(rng() * 2);
   let neutrals =
     id === "royale" ? 6 + Math.floor(rng() * 7) : id === "culture" ? 5 + Math.floor(rng() * 5) : 4 + Math.floor(rng() * 5);
-  const owned = factions * extrasPer;
-  if (owned + neutrals > 24) neutrals = Math.max(3, 24 - owned);
+  const owned = players * ownedPer;
+  if (owned + neutrals > MAX_CELLS) neutrals = Math.max(3, MAX_CELLS - owned);
 
   const cells: CellTemplate[] = [];
-  const bound = 302.4;
-  const spin = rng() * Math.PI * 2;
-  for (let f = 0; f < factions; f++) {
-    const owner = f + 1;
-    const ang = spin + (f / factions) * Math.PI * 2 + (rng() - 0.5) * 0.35;
-    const dist = 170 + rng() * 90;
-    const x = Math.cos(ang) * dist;
-    const y = Math.sin(ang) * dist;
-    tryPlace(cells, x, y, owner, 30 + rng() * 40, undefined, rng, bound, 70);
-    for (let k = 1; k < extrasPer; k++) {
-      const a = ang + (rng() - 0.5) * 1.1;
-      const r = 48 + rng() * 78;
-      tryPlace(cells, x + Math.cos(a) * r, y + Math.sin(a) * r, owner, 10 + rng() * 24, undefined, rng, bound, 70);
+  const angle0 = rng() * Math.PI * 2;
+  for (let p = 0; p < players; p++) {
+    const owner = p + 1;
+    const ang = angle0 + (p / players) * Math.PI * 2 + (rng() - 0.5) * 0.35;
+    const homeR = 170 + rng() * 90;
+    const hx = Math.cos(ang) * homeR;
+    const hy = Math.sin(ang) * homeR;
+    const coreE = 30 + rng() * 40;
+    tryPlace(cells, hx, hy, owner, coreE, undefined, rng, radius, MIN_CELL_GAP);
+    for (let s = 1; s < ownedPer; s++) {
+      const a2 = ang + (rng() - 0.5) * 1.1;
+      const r2 = 48 + rng() * 78;
+      const satE = 10 + rng() * 24;
+      tryPlace(cells, hx + Math.cos(a2) * r2, hy + Math.sin(a2) * r2, owner, satE, undefined, rng, radius, MIN_CELL_GAP);
     }
   }
-  for (let i = 0; i < neutrals; i++) {
-    const a = rng() * Math.PI * 2;
-    const r = Math.sqrt(rng()) * 360 * 0.72;
-    const need = 6 + Math.floor(rng() * 11);
-    tryPlace(cells, Math.cos(a) * r, Math.sin(a) * r, 0, 0, need, rng, bound, 70) ||
-      tryPlace(cells, (rng() - 0.5) * 80, (rng() - 0.5) * 80, 0, 0, need, rng, bound, 70);
-  }
-  const present = new Set(cells.filter((c) => c.owner !== 0).map((c) => c.owner));
-  if (present.size < factions) return { ...authored, barriers: placeBarriers(authored.cells, 360, rng, "small") };
 
-  const ownedCells = cells.filter((c) => c.owner !== 0);
-  const barriers = placeBarriers(ownedCells, 360, rng, "small");
-  const kept: CellTemplate[] = ownedCells.slice();
-  for (const c of cells) {
-    if (c.owner !== 0) continue;
-    if (!cellClearOfBarriers(c.x, c.y, 0, barriers)) continue;
-    kept.push(c);
-  }
-  while (kept.filter((c) => c.owner === 0).length < Math.min(3, neutrals)) {
+  for (let n = 0; n < neutrals; n++) {
     const a = rng() * Math.PI * 2;
-    const r = Math.sqrt(rng()) * 360 * 0.55;
-    const x = Math.cos(a) * r;
-    const y = Math.sin(a) * r;
-    if (!cellClearOfBarriers(x, y, 0, barriers)) break;
-    if (!tryPlace(kept, x, y, 0, 0, 8, rng, bound, 70)) break;
+    const r = Math.sqrt(rng()) * radius * 0.72;
+    const need = 6 + Math.floor(rng() * 11);
+    if (!tryPlace(cells, Math.cos(a) * r, Math.sin(a) * r, 0, 0, need, rng, radius, MIN_CELL_GAP)) {
+      tryPlace(cells, (rng() - 0.5) * 80, (rng() - 0.5) * 80, 0, 0, need, rng, radius, MIN_CELL_GAP);
+    }
   }
-  return { id, name: authored.name, blurb: authored.blurb, maxEnergy: 200, cells: kept, radius: 360, barriers };
+
+  const owners = new Set(cells.filter((c) => c.owner !== 0).map((c) => c.owner));
+  if (owners.size < players) return { ...base };
+
+  return {
+    id,
+    name: base.name,
+    blurb: base.blurb,
+    maxEnergy: MAX_ENERGY,
+    radius,
+    cells,
+  };
 }

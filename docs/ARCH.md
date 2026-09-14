@@ -157,12 +157,13 @@ candidates 28% of the time and forces a cut candidate 16% of the time.
 ## Silent match
 
 - Dish mix:
-  - ghost duel (`slide`) when `league.length > 0 && games % 4 === 3`
-  - compact **Swarm** (8 colours, walls, ~70 cells) when `games % 8 === 7`
-  - `royale` with reefs when `games % 7 === 6`
-  - otherwise `slide` with reefs
+  - ghost duel (`slide`, open water) when `league.length > 0 && games % 4 === 3`
+  - compact **Swarm** (8 colours, live reef recipe, radius 720, ~60–90 cells)
+    when `games % 4 === 1` — this does **not** overlap the ghost slot
+  - `royale` (open water) when `games % 7 === 6`
+  - otherwise `slide` (open water)
 - Difficulty `live`, mode `spectate`, `silent = true`
-- Step `1/60` s, match length 36 s (48 s on Swarm) or last colour standing
+- Step `1/60` s, match length 36 s (54 s on Swarm) or last colour standing
 - Think interval for a net on live: 0.28 s, spectate pace 0.85
 - **Concurrent actions:** silent Lab applies up to 2 legal moves per think
   (forced HG-1b cuts still dump every dead support pipe)
@@ -172,14 +173,22 @@ candidates 28% of the time and forces a cut candidate 16% of the time.
 - Legal cut: own tentacle; host mass refunds to the source, burrow mass
   delivers at the tip (locked cuts dump the far side as spray / fail)
 
-## Level design (v6 maps, still arch-5 nets)
+## Level design (v7 maps, still arch-5 nets)
 
-The live app added Swarm (up to 32 colours, hundreds of cells, reefs that
-block a straight tentacle). Overnight keeps the **546-float arch-5 book**
-so Petri can still pull `latest.json`. Training uses a compact Swarm
-(`TRAIN_SWARM_FACTIONS = 8`) so a 12-minute slice still lands tens of
-thousands of games, plus reefs on Slide/Royale so walls are not a
-zero-shot at pull time.
+Live Petri dishes:
+
+- **Slide / Culture / Royale** — procedural open water. No reefs.
+- **Swarm** — 32 colours, radius 1120, up to 220 cells, dense open-gap reefs
+  (8–10 radial spokes + 4–6 broken chords). A straight tentacle that hits a
+  wall is illegal.
+
+Overnight keeps the **546-float arch-5 book** so Petri can still pull
+`latest.json`. Training uses a compact Swarm (`TRAIN_SWARM_FACTIONS = 8`,
+`TRAIN_SWARM_RADIUS = 720`) with the **same reef recipe** so a 12-minute
+slice still lands tens of thousands of games. Slide/Royale stay unwalled,
+matching the live app. The previous `games % 8 === 7` Swarm slot was a
+subset of the ghost slot (`games % 4 === 3`) and never ran once Origin was
+snapshotted; Swarm is now `games % 4 === 1`.
 
 Barriers are open segments with gaps. They never sit on a cell and never
 close a loop around one. `send(from, to)` is illegal if the cell-center
