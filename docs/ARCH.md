@@ -173,16 +173,23 @@ Trainer-only legal-move filters applied when candidates are built
 layout are unchanged.
 
 **Saturated safe ally.** Same-owner target `T` when all of: `T.energy >= 200`,
-no enemy tentacle onto `T` (growing / latched / locked), and `T` itself is not
-`growing` an outbound tentacle.
+no enemy tentacle onto `T` (growing / latched / locked), and `T` has no
+**active outbound spend** (HG-3). Spend is any own tentacle from `T` that is
+`growing`, or `latched`/`locked` onto a cell whose owner is not `T`'s
+(enemy or neutral). A latched/locked pipe onto another ally is idle support
+and does not lift the ban.
 
 - **HG-1a.** `send(from, to=T)` is not legal. It is never scored or sampled.
-  Send to that ally stays legal if `T` is under attack, growing outbound, or
-  below 200.
+  Send to that ally stays legal if `T` is under attack, growing outbound,
+  pumping a latched/locked attack pipe (HG-3 power-cliff sustain), or
+  below 200. Idle full safe allies stay banned (HG-1a/HG-1b unchanged).
 - **HG-1b.** An own tentacle `L` with `L.to == T` is a dead support pipe. If the
   acting faction has any this think tick, the legal set is **only** cuts on
   those pipes (any cutT). The `-.08` score floor is skipped so the pipe is
   actually cleared — a live feed into a full, safe ally just burns a slot.
+- **HG-3 (power-cliff sustain).** Once `T` is spending on an attack pipe,
+  inbound ally feeds stay legal so the cell can hold 200 while the tentacle
+  grows and pumps. Idle full allies remain HG-1.
 
 **Easy prey / fortified enemy (HG-2).** Neutrals vs punching clusters — not
 an economy ban. Power output scales up sharply near 200, so feeding a
@@ -197,7 +204,8 @@ Only a full, safe ally is HG-1.
   opponent cell.
 - **When any easy-prey send exists this tick:** drop fortified *enemy*
   sends only. Keep neutrals, isolated weak enemies, and own sub-200 (or
-  threatened / growing-out) ally feeds. Do not ban the expo race.
+  threatened / growing-out / attacking) ally feeds. Do not ban the expo
+  race. HG-2 snowball into sub-200 allies is unchanged.
 - **HG-1b still outranks everything** (cut-only on dead support pipes).
 - No advanced exceptions yet for hitting strong connected enemies
   (kingmaker, etc.).

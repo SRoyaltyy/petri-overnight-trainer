@@ -6,6 +6,7 @@ export { Engine } from "./engine.js";
 export {
   legalThinkMoves,
   isSaturatedSafeAlly,
+  hasActiveOutboundSpend,
   deadSupportPipes,
   isEasyPrey,
   isFortifiedEnemy,

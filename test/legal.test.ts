@@ -130,12 +130,63 @@ test("send to ally remains legal when ally energy is below 200", () => {
   assert.ok(legal.sends.some((s) => s.from === A.id && s.to === T.id));
 });
 
-test("latched outbound from T does not lift the saturated-safe-ally ban", () => {
+test("HG-3: latched outbound from T onto an enemy lifts the saturated-safe-ally ban", () => {
   const { A, T, R, cells } = triangle();
-  const feed = makeTent(5, T.id, R.id, 1, "latched");
-  assert.equal(isSaturatedSafeAlly(T, [feed]), true);
-  const legal = legalThinkMoves(1, cells, [feed]);
+  const attack = makeTent(5, T.id, R.id, 1, "latched");
+  assert.equal(isSaturatedSafeAlly(T, [attack], MAX_ENERGY, cells), false);
+  const legal = legalThinkMoves(1, cells, [attack]);
+  assert.equal(legal.forcedCuts, false);
+  assert.ok(legal.sends.some((s) => s.from === A.id && s.to === T.id), "inbound feed stays legal");
+});
+
+test("HG-3: latched outbound from T onto a neutral lifts the saturated-safe-ally ban", () => {
+  const { A, T, cells } = triangle();
+  const N = makeCell(3, 0, 0, 40, 40);
+  cells.push(N);
+  const claim = makeTent(6, T.id, N.id, 1, "latched");
+  assert.equal(isSaturatedSafeAlly(T, [claim], MAX_ENERGY, cells), false);
+  const legal = legalThinkMoves(1, cells, [claim]);
+  assert.ok(legal.sends.some((s) => s.from === A.id && s.to === T.id));
+});
+
+test("HG-3: latched outbound from T onto an ally does not lift the ban", () => {
+  const { A, T, cells } = triangle();
+  const support = makeTent(5, T.id, A.id, 1, "latched");
+  assert.equal(isSaturatedSafeAlly(T, [support], MAX_ENERGY, cells), true);
+  const legal = legalThinkMoves(1, cells, [support]);
+  assert.ok(!legal.sends.some((s) => s.to === T.id), "idle full ally stays banned");
+});
+
+test("HG-3: locked outbound from T onto an enemy lifts the saturated-safe-ally ban", () => {
+  const { A, T, R, cells } = triangle();
+  const lock = makeTent(7, T.id, R.id, 1, "locked");
+  assert.equal(isSaturatedSafeAlly(T, [lock], MAX_ENERGY, cells), false);
+  const legal = legalThinkMoves(1, cells, [lock]);
+  assert.equal(legal.forcedCuts, false);
+  assert.ok(legal.sends.some((s) => s.from === A.id && s.to === T.id), "inbound feed stays legal");
+});
+
+test("HG-3: locked outbound from T onto an ally does not lift the ban", () => {
+  const { A, T, cells } = triangle();
+  const support = makeTent(8, T.id, A.id, 1, "locked");
+  assert.equal(isSaturatedSafeAlly(T, [support], MAX_ENERGY, cells), true);
+  const legal = legalThinkMoves(1, cells, [support]);
   assert.ok(!legal.sends.some((s) => s.to === T.id));
+});
+
+test("HG-3: inbound onto a full cell pumping an enemy is not a dead support pipe", () => {
+  const { A, T, R, cells } = triangle();
+  const inbound = makeTent(9, A.id, T.id, 1, "latched");
+  const attack = makeTent(10, T.id, R.id, 1, "latched");
+  assert.equal(isSaturatedSafeAlly(T, [inbound, attack], MAX_ENERGY, cells), false);
+  assert.deepEqual(deadSupportPipes(1, cells, [inbound, attack]), []);
+  const legal = legalThinkMoves(1, cells, [inbound, attack]);
+  assert.equal(legal.forcedCuts, false);
+  assert.ok(legal.sends.length > 0, "legal set is not cut-only");
+  assert.ok(
+    legal.cuts.some((c) => c.tentacleId === 9) && legal.cuts.some((c) => c.tentacleId === 10),
+    "both pipes remain ordinary optional cuts",
+  );
 });
 
 test("thinkNet never samples a send onto a saturated safe ally", () => {
