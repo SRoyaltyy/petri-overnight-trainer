@@ -137,17 +137,18 @@ test("latched outbound from T does not lift the saturated-safe-ally ban", () => 
 });
 
 test("thinkNet never samples a send onto a saturated safe ally", () => {
-  const { cells, T } = triangle();
-  const engine = fixture(cells, []);
   const net = randomNet(0.01);
   net.w[272] = 50;
   net.w[545] = -50;
-  engine.brains[1] = net;
-  for (let i = 0; i < 20; i++) engine.thinkNet(1, net);
-  assert.ok(
-    !engine.tentacles.some((t) => t.owner === 1 && t.to === T.id),
-    "no send landed on saturated safe ally",
-  );
+  for (let i = 0; i < 12; i++) {
+    const { cells, T } = triangle();
+    const engine = fixture(cells, []);
+    engine.thinkNet(1, net);
+    assert.ok(
+      !engine.tentacles.some((t) => t.owner === 1 && t.to === T.id),
+      "no send landed on saturated safe ally",
+    );
+  }
 });
 
 test("thinkNet forced-cuts a dead support pipe even when the cut head is hostile", () => {
