@@ -173,29 +173,26 @@ candidates 28% of the time and forces a cut candidate 16% of the time.
 - Legal cut: own tentacle; host mass refunds to the source, burrow mass
   delivers at the tip (locked cuts dump the far side as spray / fail)
 
-## Level design (v8 continents, still arch-5 nets)
+## Level design (v7 maps, still arch-5 nets)
 
-Live Petri dishes (DishIds unchanged for the book):
+Live Petri dishes:
 
-- **Europe (slide)** — 2 colours. Gibraltar / Channel / Bosphorus openings.
-- **Asia (culture)** — 3 colours. Hormuz, Malacca, Korea openings.
-- **Americas (royale)** — 4 colours. Panama is a land pinch, not a sea gap.
-- **World (swarm)** — 32 colours. Pacific-centered wrap so Bering is a real
-  Asia–America bottleneck; the Atlantic is an edge moat.
-
-Land is playable. Coastlines are barrier polylines. Oceans block a straight
-tentacle. Famous straits are wall gaps.
+- **Slide / Culture / Royale** — procedural open water. No reefs.
+- **Swarm** — 32 colours, radius 1120, up to 220 cells, dense open-gap reefs
+  (8–10 radial spokes + 4–6 broken chords). A straight tentacle that hits a
+  wall is illegal.
 
 Overnight keeps the **546-float arch-5 book** so Petri can still pull
-`latest.json`. Training uses a compact World (`TRAIN_SWARM_FACTIONS = 8`)
-on the **same coasts** so a 12-minute slice still lands tens of thousands
-of games. In-tab Lab never spawns the live 32-colour World.
+`latest.json`. Training uses a compact Swarm (`TRAIN_SWARM_FACTIONS = 8`,
+`TRAIN_SWARM_RADIUS = 720`) with the **same reef recipe** so a 12-minute
+slice still lands tens of thousands of games. Slide/Royale stay unwalled,
+matching the live app. The previous `games % 8 === 7` Swarm slot was a
+subset of the ghost slot (`games % 4 === 3`) and never ran once Origin was
+snapshotted; Swarm is now `games % 4 === 1`.
 
-The previous `games % 8 === 7` Swarm slot was a subset of the ghost slot
-(`games % 4 === 3`) and never ran once Origin was snapshotted; World is
-`games % 4 === 1`.
-
-`send(from, to)` is illegal if the cell-center segment intersects a coast.
+Barriers are open segments with gaps. They never sit on a cell and never
+close a loop around one. `send(from, to)` is illegal if the cell-center
+segment intersects any reef.
 
 Nets do not grow extra inputs: occupancy is indexed by owner id,
 `alive`/`dominance` already generalise past 4 colours, and a blocked
