@@ -224,24 +224,28 @@ and does not lift the ban.
   inbound ally feeds stay legal so the cell can hold 200 while the tentacle
   grows and pumps. Idle full allies remain HG-1.
 
-**Easy prey / fortified enemy (HG-2).** Neutrals vs punching clusters — not
+**Easy prey / fortified enemy (HG-2 / HG-4).** Neutrals vs punching clusters — not
 an economy ban. Power output scales up sharply near 200, so feeding a
 **sub-200 ally** (or concentrating growth) can beat an opponent who grabbed
 neutrals but never scaled. That is allowed even while neutrals sit open.
 Only a full, safe ally is HG-1.
 
-- **Easy prey:** in-reach `owner === 0`, or an isolated weak enemy
-  (`energy ≤ 40` or `≤ 0.2 * maxEnergy`, same-faction support ≤ 1, not
-  winning a locked clash).
-- **Fortified enemy:** high-energy and/or well-supported / strong-side-lock
-  opponent cell.
-- **When any easy-prey send exists this tick:** drop fortified *enemy*
-  sends only. Keep neutrals, isolated weak enemies, and own sub-200 (or
-  threatened / growing-out / attacking) ally feeds. Do not ban the expo
-  race. HG-2 snowball into sub-200 allies is unchanged.
+- **Easy prey / soft target:** an *uncontested* neutral; an isolated weak
+  enemy (`energy ≤ 40` or `≤ 0.2 * maxEnergy`, same-faction support ≤ 1,
+  not winning a locked clash); an **exposed** enemy (2+ outbound attack
+  pipes and no inbound ally feed — a 200 with three tentacles and no
+  support counts); or a **weaker** enemy (`to.energy ≤ 0.5 * from.energy`
+  or `to ≤ 80` while `from ≥ 140`, support ≤ 1).
+- **Graveyard (HG-4):** a neutral already contested by two or more colours
+  (or three-plus incoming pipes). Not soft prey.
+- **Fortified enemy:** high-energy, supported, or strong-side-lock opponent
+  that is not exposed or weaker than the source.
+- **When any soft-target send exists this tick:** drop fortified *enemy*
+  sends **and** graveyard-neutral sends. Keep open neutrals, pickoffs,
+  and own sub-200 (or threatened / growing-out / attacking) ally feeds.
+- Match fitness fines pipes sitting on a graveyard and pays extra for
+  pipes on exposed / weak enemies.
 - **HG-1b still outranks everything** (cut-only on dead support pipes).
-- No advanced exceptions yet for hitting strong connected enemies
-  (kingmaker, etc.).
 
 ## Evolution (every 10 games)
 
