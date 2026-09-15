@@ -179,6 +179,36 @@ export function scoreMatch(engine: Engine, seats: number[]): { winner: number | 
       if (a > maxAim) maxAim = a;
     }
     if (aimSum > 1) scores[seat] += (maxAim / aimSum) * 22;
+
+    let grind = 0;
+    let pickoff = 0;
+    for (const t of engine.tentacles) {
+      if (t.owner !== seat) continue;
+      const dest = engine.cells[t.to];
+      if (!dest) continue;
+      if (dest.owner === 0) {
+        const colours = new Set<number>();
+        for (const u of engine.tentacles) {
+          if (u.to === dest.id && u.owner !== 0) colours.add(u.owner);
+        }
+        if (colours.size >= 2) grind++;
+      } else if (dest.owner !== seat) {
+        let inbound = 0;
+        let outboundAtk = 0;
+        for (const u of engine.tentacles) {
+          if (u.to === dest.id && u.owner === dest.owner) inbound++;
+          if (u.from === dest.id && u.owner === dest.owner) {
+            const tip = engine.cells[u.to];
+            if (tip && tip.owner !== dest.owner) outboundAtk++;
+          }
+        }
+        if (inbound === 0 && outboundAtk >= 2) pickoff++;
+        else if (dest.energy <= 80) pickoff++;
+      }
+    }
+    scores[seat] -= grind * (multi ? 10 : 7);
+    scores[seat] += pickoff * (multi ? 14 : 11);
+
     if (engine.time > 14 && engine.captureCount[seat] === 0 && cellsN[seat] >= 2) {
       scores[seat] -= multi ? 18 : 36;
     }
