@@ -17,7 +17,7 @@ export type LegalAction = LegalSend | LegalCut;
 export interface LegalSet {
   /** HG-1b: this tick is cut-only on dead support pipes. */
   forcedCuts: boolean;
-  /** HG-2: easy prey existed, so fortified enemy sends were dropped. */
+  /** HG-2/4: a soft target existed, so fortified / graveyard sends were dropped. */
   droppedFortified: boolean;
   sends: LegalSend[];
   cuts: LegalCut[];
@@ -111,18 +111,97 @@ export function isStrongSideLock(cell: Cell, tentacles: Tentacle[]): boolean {
   return false;
 }
 
+/** Distinct hostile colours with a pipe onto this cell. */
+export function contestingFactions(cell: Cell, tentacles: Tentacle[]): number {
+  const seen = new Set<number>();
+  for (const t of tentacles) {
+    if (t.to !== cell.id) continue;
+    if (t.owner === 0 || t.owner === cell.owner) continue;
+    seen.add(t.owner);
+  }
+  return seen.size;
+}
+
 /**
- * HG-2 easy prey: in-reach neutral, or a low-energy enemy with little/no
- * same-faction support that is not winning a lock.
+ * HG-4 graveyard: a neutral two or more colours are already paying rent on.
+ * Piling a third pipe almost never flips it.
+ */
+export function isContestedGraveyard(cell: Cell, tentacles: Tentacle[]): boolean {
+  if (cell.owner !== 0) return false;
+  return contestingFactions(cell, tentacles) >= 2 || hostileIncomingCount(cell, tentacles) >= 3;
+}
+
+export function outboundAttackCount(cell: Cell, tentacles: Tentacle[], cells: Cell[]): number {
+  let n = 0;
+  for (const t of tentacles) {
+    if (t.from !== cell.id || t.owner !== cell.owner) continue;
+    const dest = cells[t.to];
+    if (dest && dest.owner !== cell.owner) n++;
+  }
+  return n;
+}
+
+export function inboundAllyCount(cell: Cell, tentacles: Tentacle[]): number {
+  if (cell.owner === 0) return 0;
+  let n = 0;
+  for (const t of tentacles) {
+    if (t.to === cell.id && t.owner === cell.owner) n++;
+  }
+  return n;
+}
+
+/**
+ * HG-4 exposed: enemy spending 2+ attack pipes with no inbound ally feed.
+ * A 200 cell with three tentacles and no support is a pickoff, not a fortress.
+ */
+export function isExposedEnemy(
+  to: Cell,
+  viewer: number,
+  tentacles: Tentacle[],
+  cells: Cell[],
+): boolean {
+  if (to.owner === 0 || to.owner === viewer) return false;
+  if (isStrongSideLock(to, tentacles)) return false;
+  if (inboundAllyCount(to, tentacles) > 0) return false;
+  return outboundAttackCount(to, tentacles, cells) >= 2;
+}
+
+/**
+ * HG-4 weaker: enemy clearly poorer than the source and not well supported.
+ */
+export function isWeakerPrey(
+  to: Cell,
+  from: Cell | undefined,
+  viewer: number,
+  tentacles: Tentacle[],
+  maxEnergy = MAX_ENERGY,
+): boolean {
+  if (!from) return false;
+  if (to.owner === 0 || to.owner === viewer) return false;
+  if (factionSupportCount(to, tentacles) > 1) return false;
+  if (isStrongSideLock(to, tentacles)) return false;
+  const ratio = to.energy <= from.energy * 0.5;
+  const abs = to.energy <= 80 && from.energy >= maxEnergy * 0.7;
+  return ratio || abs;
+}
+
+/**
+ * HG-2/4 soft target: open (uncontested) neutral, isolated weak enemy,
+ * exposed overextended enemy, or energy-asymmetric enemy.
+ * A contested graveyard is *not* soft.
  */
 export function isEasyPrey(
   to: Cell,
   viewer: number,
   tentacles: Tentacle[],
   maxEnergy = MAX_ENERGY,
+  cells: Cell[] = [],
+  from?: Cell,
 ): boolean {
-  if (to.owner === 0) return true;
   if (to.owner === viewer) return false;
+  if (to.owner === 0) return !isContestedGraveyard(to, tentacles);
+  if (isExposedEnemy(to, viewer, tentacles, cells)) return true;
+  if (isWeakerPrey(to, from, viewer, tentacles, maxEnergy)) return true;
   const low = to.energy <= 40 || to.energy <= 0.2 * maxEnergy;
   if (!low) return false;
   if (factionSupportCount(to, tentacles) > 1) return false;
@@ -130,23 +209,29 @@ export function isEasyPrey(
   return true;
 }
 
-/** High-energy and/or well-supported / strong-lock enemy — not easy prey. */
+/** High-energy supported enemy that is not exposed or weaker than the source. */
 export function isFortifiedEnemy(
   to: Cell,
   viewer: number,
   tentacles: Tentacle[],
   maxEnergy = MAX_ENERGY,
+  cells: Cell[] = [],
+  from?: Cell,
 ): boolean {
   if (to.owner === 0 || to.owner === viewer) return false;
-  return !isEasyPrey(to, viewer, tentacles, maxEnergy);
+  return !isEasyPrey(to, viewer, tentacles, maxEnergy, cells, from);
 }
 
 /**
  * Hard-ground legal set for one think tick.
  * HG-1a drops send-to-saturated-safe-ally.
  * HG-1b: if any dead support pipe exists, the set is only cuts on those pipes.
- * HG-2: if any easy-prey sends exist, drop fortified *enemy* sends only.
+ * HG-2: if any soft-target sends exist, drop fortified *enemy* sends.
  *        Ally snowball (sub-200 / threatened / growing-out) stays legal.
+ * HG-4: a contested graveyard is not soft prey. When a soft target exists,
+ *        drop sends onto neutrals two+ colours already contest.
+ *        Exposed (2+ attack pipes, no inbound support) and weaker enemies
+ *        are soft even at high energy.
  * HG-3: saturated-safe requires no active outbound spend. Growing, or
  *        latched/locked onto enemy/neutral, lifts the ban so inbound feeds
  *        can hold the 200 cliff. Latched/locked onto an ally does not.
@@ -189,12 +274,17 @@ export function legalThinkMoves(
 
   const hasEasyPrey = sends.some((s) => {
     const dest = cells[s.to];
-    return dest && isEasyPrey(dest, owner, tentacles, maxEnergy);
+    const src = cells[s.from];
+    return dest && isEasyPrey(dest, owner, tentacles, maxEnergy, cells, src);
   });
   if (hasEasyPrey) {
     sends = sends.filter((s) => {
       const dest = cells[s.to];
-      return dest && !isFortifiedEnemy(dest, owner, tentacles, maxEnergy);
+      const src = cells[s.from];
+      if (!dest) return false;
+      if (isContestedGraveyard(dest, tentacles)) return false;
+      if (isFortifiedEnemy(dest, owner, tentacles, maxEnergy, cells, src)) return false;
+      return true;
     });
   }
 
