@@ -49,7 +49,6 @@ function snapshotLeague(book: Book): Book {
   if (last && last.gen === top.gen) return next;
   next.league.push({ gen: top.gen, w: String(top.w), elo: top.strength });
   if (next.league.length > POPULATION) {
-    // Never wipe Origin (league[0]).
     next.league = [next.league[0], ...next.league.slice(-15)];
   }
   return next;
@@ -60,23 +59,32 @@ function evolve(book: Book): Book {
   next.strains.sort((a, b) => b.fitness - a.fitness || b.strength - a.strength);
   const elites = next.strains.slice(0, 4);
   const pool = next.strains.slice(0, 8);
+  const winners = pool
+    .slice()
+    .sort((a, b) => {
+      const aw = a.games > 0 ? a.wins / a.games : 0;
+      const bw = b.games > 0 ? b.wins / b.games : 0;
+      return bw - aw || b.fitness - a.fitness;
+    });
   const kids: Strain[] = elites.map((s) => ({ ...s, w: s.w }));
   next.gen++;
   const scale = mutationScale(next.gen);
-  while (kids.length < 15) {
-    const a = pool[Math.floor(Math.random() * pool.length)];
+  while (kids.length < 13) {
+    const a = winners[Math.floor(Math.random() * Math.min(6, winners.length))];
     const b = pool[Math.floor(Math.random() * pool.length)];
     let net =
       a.id !== b.id && Math.random() < 0.4
         ? crossoverNet(netFromWeights(a.w), netFromWeights(b.w))
         : cloneNet(netFromWeights(a.w));
-    net = mutateNet(net, scale, 0.22);
+    net = mutateNet(net, scale, 0.3);
     const child = makeStrain(net.w, next.gen, (a.elo + b.elo) / 2);
     child.strength = (a.strength + b.strength) / 2;
     kids.push(child);
   }
   kids.push(makeStrain(randomNet(0.1).w, next.gen));
-  next.strains = kids;
+  kids.push(makeStrain(randomNet(0.12).w, next.gen));
+  kids.push(makeStrain(mutateNet(netFromWeights(elites[0].w), scale * 1.4, 0.45).w, next.gen, elites[0].elo));
+  next.strains = kids.slice(0, 16);
   return next.gen % LEAGUE_EVERY_GENS === 0 ? snapshotLeague(next) : next;
 }
 
@@ -159,17 +167,22 @@ export function scoreMatch(engine: Engine, seats: number[]): { winner: number | 
     let idle = 0;
     for (const c of engine.cells) {
       if (c.owner !== seat || outgoing[c.id] >= tentacleSlots(c.energy)) continue;
+      if (c.energy < 30) continue;
+      if (incoming[c.id] > 0 && c.energy < 80) continue;
       const reach = reachOf(c.energy) * 1.06;
-      let threat = false;
+      let useful = false;
       for (const other of engine.cells) {
-        if (other.owner !== seat && other.owner !== 0 && Math.hypot(other.x - c.x, other.y - c.y) <= reach) {
-          threat = true;
+        if (other.id === c.id) continue;
+        const dist = Math.hypot(other.x - c.x, other.y - c.y);
+        if (dist > reach) continue;
+        if (other.owner === 0 || other.owner !== seat || other.energy < 175) {
+          useful = true;
           break;
         }
       }
-      if (threat) idle++;
+      if (useful) idle++;
     }
-    scores[seat] -= idle * 5;
+    scores[seat] -= idle * 8;
 
     let maxAim = 0;
     let aimSum = 0;
@@ -181,17 +194,28 @@ export function scoreMatch(engine: Engine, seats: number[]): { winner: number | 
     if (aimSum > 1) scores[seat] += (maxAim / aimSum) * 22;
 
     let grind = 0;
+    let funded = 0;
     let pickoff = 0;
+    const seenMid = new Set<number>();
     for (const t of engine.tentacles) {
       if (t.owner !== seat) continue;
       const dest = engine.cells[t.to];
       if (!dest) continue;
       if (dest.owner === 0) {
+        if (seenMid.has(dest.id)) continue;
+        seenMid.add(dest.id);
         const colours = new Set<number>();
+        let own = 0;
         for (const u of engine.tentacles) {
-          if (u.to === dest.id && u.owner !== 0) colours.add(u.owner);
+          if (u.to !== dest.id || u.owner === 0) continue;
+          colours.add(u.owner);
+          if (u.owner === seat) own++;
         }
-        if (colours.size >= 2) grind++;
+        if (colours.size >= 2) {
+          const need = colours.size + 1;
+          if (own >= need) funded++;
+          else grind += need - own;
+        }
       } else if (dest.owner !== seat) {
         let inbound = 0;
         let outboundAtk = 0;
@@ -207,6 +231,7 @@ export function scoreMatch(engine: Engine, seats: number[]): { winner: number | 
       }
     }
     scores[seat] -= grind * (multi ? 10 : 7);
+    scores[seat] += funded * (multi ? 16 : 12);
     scores[seat] += pickoff * (multi ? 14 : 11);
 
     if (engine.time > 14 && engine.captureCount[seat] === 0 && cellsN[seat] >= 2) {
@@ -268,8 +293,6 @@ export function settleBook(
 }
 
 export function pickDish(games: number, hasLeague: boolean): DishId {
-  // Ghost duels stay on Slide. Do NOT use a modulus that is a subset of
-  // games % 4 === 3 (the old games % 8 === 7 never fired once the league existed).
   if (hasLeague && games % 4 === 3) return "slide";
   if (games % 4 === 1) return "swarm";
   if (games % 7 === 6) return "royale";
@@ -326,11 +349,6 @@ export class Lab {
     this.engine = null;
   }
 
-  /**
-   * Run silent self-play until `matches` complete or `budgetMs` elapses.
-   * Unlike the in-tab Lab pump (80-iteration UI cap), this finishes matches
-   * so a wall-clock budget is the only throttle.
-   */
   run(opts: { matches?: number; budgetMs?: number; onMatch?: (n: number, book: Book) => void }): number {
     const matchCap = opts.matches ?? Number.POSITIVE_INFINITY;
     const budget = opts.budgetMs ?? Number.POSITIVE_INFINITY;

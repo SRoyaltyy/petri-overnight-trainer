@@ -124,11 +124,66 @@ export function contestingFactions(cell: Cell, tentacles: Tentacle[]): number {
 
 /**
  * HG-4 graveyard: a neutral two or more colours are already paying rent on.
- * Piling a third pipe almost never flips it.
+ * One lone pipe cannot flip it; enough committed pipes can.
  */
 export function isContestedGraveyard(cell: Cell, tentacles: Tentacle[]): boolean {
   if (cell.owner !== 0) return false;
   return contestingFactions(cell, tentacles) >= 2 || hostileIncomingCount(cell, tentacles) >= 3;
+}
+
+/** Own pipes already on `cell`. */
+export function ownPipesOn(cell: Cell, owner: number, tentacles: Tentacle[]): number {
+  let n = 0;
+  for (const t of tentacles) {
+    if (t.to === cell.id && t.owner === owner) n++;
+  }
+  return n;
+}
+
+/**
+ * Pipes needed to out-pump the current contest.
+ * Two rival colours on a mid → 3 own pipes; three incoming → at least 3.
+ */
+export function contestNeed(cell: Cell, tentacles: Tentacle[]): number {
+  const colours = contestingFactions(cell, tentacles);
+  const incoming = hostileIncomingCount(cell, tentacles);
+  if (colours >= 2) return colours + 1;
+  if (incoming >= 3) return incoming;
+  return 1;
+}
+
+/** Owned cells that can still grow a new pipe onto `dest`. */
+export function spareCommitters(
+  dest: Cell,
+  owner: number,
+  cells: Cell[],
+  tentacles: Tentacle[],
+): number {
+  let n = 0;
+  for (const from of cells) {
+    if (from.owner !== owner || from.id === dest.id || from.energy < 4) continue;
+    if (outgoingCount(from.id, tentacles) >= tentacleSlots(from.energy)) continue;
+    if (alreadyAimed(from.id, dest.id, tentacles)) continue;
+    const dist = Math.hypot(dest.x - from.x, dest.y - from.y);
+    if (dist > reachOf(from.energy) * 1.06) continue;
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Arithmetic, not a ban: a contested mid is worth taking only if this
+ * faction can put `contestNeed` pipes on it (already on + still able to send).
+ */
+export function canAffordContest(
+  dest: Cell,
+  owner: number,
+  cells: Cell[],
+  tentacles: Tentacle[],
+): boolean {
+  if (!isContestedGraveyard(dest, tentacles)) return true;
+  return ownPipesOn(dest, owner, tentacles) + spareCommitters(dest, owner, cells, tentacles) >=
+    contestNeed(dest, tentacles);
 }
 
 export function outboundAttackCount(cell: Cell, tentacles: Tentacle[], cells: Cell[]): number {
@@ -228,10 +283,10 @@ export function isFortifiedEnemy(
  * HG-1b: if any dead support pipe exists, the set is only cuts on those pipes.
  * HG-2: if any soft-target sends exist, drop fortified *enemy* sends.
  *        Ally snowball (sub-200 / threatened / growing-out) stays legal.
- * HG-4: a contested graveyard is not soft prey. When a soft target exists,
- *        drop sends onto neutrals two+ colours already contest.
- *        Exposed (2+ attack pipes, no inbound support) and weaker enemies
- *        are soft even at high energy.
+ * HG-4: a contested mid is not soft prey unless this faction can commit
+ *        contestNeed pipes (2 rival 200s → 3 own tentacles). Underfunded
+ *        graveyard sends drop when a real pickoff exists; a funded pile
+ *        stays legal. Exposed / weaker enemies are soft even at 200.
  * HG-3: saturated-safe requires no active outbound spend. Growing, or
  *        latched/locked onto enemy/neutral, lifts the ban so inbound feeds
  *        can hold the 200 cliff. Latched/locked onto an ally does not.
@@ -282,7 +337,9 @@ export function legalThinkMoves(
       const dest = cells[s.to];
       const src = cells[s.from];
       if (!dest) return false;
-      if (isContestedGraveyard(dest, tentacles)) return false;
+      if (isContestedGraveyard(dest, tentacles) && !canAffordContest(dest, owner, cells, tentacles)) {
+        return false;
+      }
       if (isFortifiedEnemy(dest, owner, tentacles, maxEnergy, cells, src)) return false;
       return true;
     });
